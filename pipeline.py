@@ -269,7 +269,7 @@ def gate(job):
     job.progress('Previous-year questions')
     pyqs = job.step('pyq', lambda: pyq_step(job, topic, o))
     pyq_brief = '\n'.join('- ' + q['question'][:160] for q in pyqs) or '(none)'
-    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=book_text, BOOK_NOTE=note)
+    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=book_text, BOOK_NOTE=note, USER_PROMPT=o.get('prompt') or '(none)')
 
     job.progress('Planning the sections')
     plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or ''), tidy=C.gate_plan, problems=C.gate_plan_problems)

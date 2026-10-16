@@ -1,5 +1,8 @@
 Plan the GATE topic PDF for "{{TOPIC}}" ({{PAPER}} · {{SUBJECT}}).
 
+User's instructions (follow them within the GATE format and the JSON below; "(none)" means none):
+{{USER_PROMPT}}
+
 {{BOOK_NOTE}}
 <book>
 {{BOOK}}

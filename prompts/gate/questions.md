@@ -1,5 +1,8 @@
 Write all the questions and the closing material for the GATE topic "{{TOPIC}}" ({{PAPER}} · {{SUBJECT}}).
 
+User's instructions (follow them within the GATE format and the JSON below; "(none)" means none):
+{{USER_PROMPT}}
+
 GATE question archetypes for this topic: {{ARCHETYPES}}
 Concepts covered in the notes (headings): {{HEADINGS}}
 Previous-year questions already in the PDF (do NOT reuse or lightly change them):

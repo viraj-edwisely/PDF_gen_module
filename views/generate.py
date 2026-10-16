@@ -1,5 +1,6 @@
 """Generate page: what to make, from which book, which topics, the details; then review and start the run."""
 import io
+import pandas as pd
 import streamlit as st
 import db, jobs, llm, pyq
 from config import COST_CAP, MAX_TOPICS, MAX_URLS, PROVIDERS, SCOPE_TOKEN_BUDGET, TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, VERIFY_PROVIDER, cost, secret
@@ -37,6 +38,10 @@ if book:
         start = c1.number_input('First page (printed page number)', 1, last, 1)
         end = c2.number_input('Last page', 1, last, last)
 default = book or {'paper': '', 'subject': ''}
+if st.session_state.get('subject_book') != (book and book['id']):          # a newly chosen book fills in its subject and paper
+    st.session_state.subject_book = book and book['id']
+    for k in ('subject', 'paper'):
+        if book or k not in st.session_state: st.session_state[k] = default[k] or ''
 
 # 3. topics: one row each (GATE: each also takes its own PYQ sheet)
 st.subheader('3 · Topics')
@@ -44,6 +49,35 @@ st.caption('GATE: one PDF per topic. Non-GATE: one module PDF covering all of th
 ids = st.session_state.setdefault('topic_ids', [0])
 def add_topic(): st.session_state.topic_ids.append(max(st.session_state.topic_ids) + 1)
 def remove_topic(i): st.session_state.topic_ids.remove(i)
+
+def import_topics():
+    """Fill the topic rows (and the subject) from the uploaded sheet: empty rows are replaced, filled ones kept."""
+    s = st.session_state
+    if not s.topics_file: return
+    try:
+        df = pd.read_excel(s.topics_file, dtype=str).rename(columns=lambda c: str(c).strip().lower())
+        sheet = [t.strip() for t in df['topic'].dropna() if t.strip()]
+    except Exception as e:
+        s.import_msg = ('error', f'The sheet could not be read: it needs a column named Topic ({e}).'); return
+    keep = [i for i in s.topic_ids if s.get(f'topic{i}', '').strip()]
+    have = {s[f'topic{i}'].strip() for i in keep}
+    new = [t for t in dict.fromkeys(sheet) if t not in have][:MAX_TOPICS - len(keep)]
+    first = max(s.topic_ids) + 1
+    for k, t in enumerate(new): s[f'topic{first + k}'] = t
+    s.topic_ids = keep + list(range(first, first + len(new))) or [first]
+    subjects = [x.strip() for x in df.get('subject', pd.Series(dtype=str)).dropna() if x.strip()]
+    if subjects: s.subject = subjects[0]
+    skipped = len(set(sheet)) - len(new)
+    s.import_msg = ('success', f'Added {len(new)} topic(s) from the sheet' + (f'; {skipped} skipped (already listed, or more than {MAX_TOPICS} in all).' if skipped else '.'))
+
+with st.expander('Import topics from an Excel sheet'):
+    st.caption('One row per topic, with the columns **Subject** and **Topic** (Subject is optional; the first one fills in the Subject field below).')
+    c1, c2 = st.columns([3, 1], vertical_alignment='bottom')
+    c1.file_uploader('Topics sheet (.xlsx)', type='xlsx', key='topics_file', on_change=import_topics)
+    template = io.BytesIO()
+    pd.DataFrame({'Subject': ['Computer Organization and Architecture'] * 2, 'Topic': ['Addressing modes', 'Instruction formats']}).to_excel(template, index=False)
+    c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
+    if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
 names, sheets = [], {}
 for k, i in enumerate(ids, 1):
     cols = st.columns([5, 4, 1] if mode == 'gate' else [9, 1], vertical_alignment='bottom')
@@ -60,8 +94,8 @@ st.subheader('4 · Details')
 options = {'topics': topics}
 if mode == 'gate':
     c1, c2 = st.columns([1, 3])
-    options['paper'] = c1.text_input('GATE paper code', value=default['paper'] or '', placeholder='CS').strip().upper()
-    options['subject'] = c2.text_input('Subject', value=default['subject'], placeholder='e.g. Computer Organization and Architecture').strip()
+    options['paper'] = c1.text_input('GATE paper code', key='paper', placeholder='CS').strip().upper()
+    options['subject'] = c2.text_input('Subject', key='subject', placeholder='e.g. Computer Organization and Architecture').strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the writer writes one if empty)').strip()
     with st.expander('Previous-year question sources (optional)'):
         options['urls'] = [u.strip() for u in st.text_area('Web pages or PDF links with GATE previous-year questions, one per line', height=90).splitlines() if u.strip()]
@@ -71,10 +105,12 @@ if mode == 'gate':
     options['verify'] = st.toggle('Double-check answers with a second model', value=True,
                                   help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example; disputed items go back to the writer once. Adds about $0.05-0.10 per PDF.")
 else:
-    options['subject'] = st.text_input('Subject', value=default['subject']).strip()
-    options['prompt'] = st.text_area('Your instructions (optional; empty uses the standard module template)', height=110).strip()
+    options['subject'] = st.text_input('Subject', key='subject').strip()
     c1, c2 = st.columns(2)
     options['study_time'], options['audience'] = c1.text_input('Study time (optional)').strip(), c2.text_input('Recommended for (optional)').strip()
+options['prompt'] = st.text_area('User prompt (optional)', height=100, placeholder='e.g. Focus on numerical problems on effective address calculation; use the notation of Hamacher.',
+                                 help='Extra instructions sent to the writer with every step. GATE: the GATE format stays the same. '
+                                      'Non-GATE: overrides the standard module template where they conflict.').strip()
 
 # 5. review
 st.subheader('5 · Review and start')
@@ -100,7 +136,7 @@ if not options['subject']: errors.append('Enter the subject.')
 with st.container(border=True):
     what = f"{len(topics)} GATE PDF{'s' if len(topics) != 1 else ''}" if mode == 'gate' else f"1 learning module with {len(topics)} topic{'s' if len(topics) != 1 else ''}"
     src = (book['title'] + (f', pages {start}-{end}' if start else '')) if book else "no book (the writer's own knowledge)"
-    st.markdown(f"**{what}** · writer {provider} · source: {src}\n\n"
+    st.markdown(f"**{what}** · writer {provider} · source: {src}{' · with your prompt' if options['prompt'] else ''}\n\n"
                 f"Estimated cost **about ${estimate:.2f}**, time **about {minutes} minutes**. A run stops by itself at ${COST_CAP:.0f}; finished PDFs are kept.")
     if errors: st.info('Still needed: ' + ' '.join(errors))
     if st.button('Generate', type='primary', disabled=bool(errors)):

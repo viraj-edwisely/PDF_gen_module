@@ -45,7 +45,8 @@ def _gemini_client():
     from google import genai
     from google.oauth2 import service_account
     info = secret('GOOGLE_SERVICE_ACCOUNT_JSON')
-    info = json.loads(info) if isinstance(info, str) else dict(info)     # pasted as a JSON string or as a TOML table
+    # pasted as a JSON string or as a TOML table; strict=False because TOML """...""" turns the key's \n into real line breaks
+    info = json.loads(info, strict=False) if isinstance(info, str) else dict(info)
     creds = service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/cloud-platform'])
     args = dict(project=info['project_id'], location=secret('GOOGLE_CLOUD_LOCATION') or 'global', credentials=creds)
     try: return genai.Client(enterprise=True, **args)      # google-genai 2.x
