@@ -3,10 +3,12 @@ import os
 
 # One model per provider: Claude Sonnet is the reference, OpenAI and Gemini are mid-price models. price = (USD per 1M input tokens, USD per 1M output tokens).
 PROVIDERS = {
-    'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0), 'max_out': 64_000, 'concurrent': 6},
-    'OpenAI': {'model': 'gpt-5.4-mini', 'key': 'OPENAI_API_KEY', 'price': (0.75, 4.50), 'max_out': 128_000, 'concurrent': 6},
-    'Gemini': {'model': 'gemini-3-flash-preview', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.50, 3.0), 'max_out': 65_536, 'concurrent': 4},  # Vertex AI. Prices from trackers: confirm them and the model ID in your project
+    'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0), 'cached': 0.05, 'max_out': 64_000, 'concurrent': 6},
+    'OpenAI': {'model': 'gpt-5.4-mini', 'key': 'OPENAI_API_KEY', 'price': (0.75, 4.50), 'cached': 0.1, 'max_out': 128_000, 'concurrent': 6},
+    'Gemini': {'model': 'gemini-3-flash-preview', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.50, 3.0), 'cached': 0.1, 'max_out': 65_536, 'concurrent': 4},  # Vertex AI
 }
+# price: USD per 1M input / output tokens (list prices checked 2026-10-16; reasoning/thinking tokens are billed as output);
+# cached: price of a cache read as a share of the input price (Claude cache writes cost 1.25x);
 # max_out: the model's output limit (only the tokens actually written are paid for); concurrent: calls in flight at once
 # per provider across all runs, so parallel topics do not trip its rate limit
 RETRIES = 6               # retries of a rate-limited (429), overloaded or failed (5xx, timeout) call, with growing waits

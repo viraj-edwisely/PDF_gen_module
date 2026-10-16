@@ -28,7 +28,7 @@ def _claude(model, system, user, max_tokens):
     if msg.stop_reason == 'max_tokens': raise LLMError(CUT_OFF.format('Claude'), text)
     if msg.stop_reason == 'refusal': raise LLMError('Claude declined to answer', text)
     u = msg.usage; read, write = u.cache_read_input_tokens or 0, u.cache_creation_input_tokens or 0
-    return text, u.input_tokens + read + write, u.output_tokens, u.input_tokens + 0.1 * read + 1.25 * write     # cache reads cost 10%, writes 125%
+    return text, u.input_tokens + read + write, u.output_tokens, u.input_tokens + PROVIDERS['Claude']['cached'] * read + 1.25 * write
 
 
 def _openai(model, system, user, max_tokens):
@@ -42,7 +42,7 @@ def _openai(model, system, user, max_tokens):
             if ev.choices[0].finish_reason == 'length': raise LLMError(CUT_OFF.format('OpenAI'), text)
         if ev.usage:
             cached = getattr(ev.usage.prompt_tokens_details, 'cached_tokens', 0) or 0
-            usage = (ev.usage.prompt_tokens, ev.usage.completion_tokens, ev.usage.prompt_tokens - 0.9 * cached)    # automatic prompt caching: cached input costs 10%
+            usage = (ev.usage.prompt_tokens, ev.usage.completion_tokens, ev.usage.prompt_tokens - (1 - PROVIDERS['OpenAI']['cached']) * cached)    # automatic prompt caching
     return (text,) + usage
 
 
@@ -72,7 +72,7 @@ def _gemini(model, system, user, max_tokens):
         if ch.candidates and str(ch.candidates[0].finish_reason).endswith('MAX_TOKENS'): raise LLMError(CUT_OFF.format('Gemini'), text)
         if ch.usage_metadata:
             m = ch.usage_metadata; cached = m.cached_content_token_count or 0
-            usage = (m.prompt_token_count or 0, (m.candidates_token_count or 0) + (m.thoughts_token_count or 0), (m.prompt_token_count or 0) - 0.9 * cached)
+            usage = (m.prompt_token_count or 0, (m.candidates_token_count or 0) + (m.thoughts_token_count or 0), (m.prompt_token_count or 0) - (1 - PROVIDERS['Gemini']['cached']) * cached)
     return (text,) + usage
 
 

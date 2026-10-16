@@ -75,7 +75,7 @@ with st.expander('Import topics from an Excel sheet'):
     c1, c2 = st.columns([3, 1], vertical_alignment='bottom')
     c1.file_uploader('Topics sheet (.xlsx)', type='xlsx', key='topics_file', on_change=import_topics)
     template = io.BytesIO()
-    pd.DataFrame({'Subject': ['Computer Organization and Architecture'] * 2, 'Topic': ['Addressing modes', 'Instruction formats']}).to_excel(template, index=False)
+    pd.DataFrame(columns=['Subject', 'Topic']).to_excel(template, index=False)
     c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
     if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
 names, sources = [], {}          # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions
@@ -104,7 +104,7 @@ if mode == 'gate':
     options['subject'] = c2.text_input('Subject', key='subject', placeholder='e.g. Computer Organization and Architecture').strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the writer writes one if empty)').strip()
     has_verifier = bool(secret(PROVIDERS[VERIFY_PROVIDER]['key']))
-    options['verify'] = st.toggle('Double-check answers with a second model', value=True,
+    options['verify'] = st.toggle('Double-check answers with a second model', value=False,
                                   help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example; disputed items go back to the writer once. Adds about $0.05-0.10 per PDF.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()
