@@ -29,6 +29,7 @@ def create_run(mode, book_id, scope, provider, options, user):
                  (mode, title, book_id, scope[0], scope[1], provider, PROVIDERS[provider]['model'], json.dumps(options), COST_CAP, user))[0]['id']
     db.many('insert into run_topics (run_id, name, position) values (%s,%s,%s)', [(run, n, i) for i, n in enumerate(names)])
     pipeline.log(run, None, f'Run created by {user}: {len(names)} PDF(s), writer {provider} ({PROVIDERS[provider]["model"]})')
+    db.event(user, 'run started', run, title=title, type='GATE' if mode == 'gate' else 'Non-GATE', pdfs=len(names), writer=provider, book=bool(book_id))
     return run
 
 
@@ -73,6 +74,7 @@ def _topic(rt):
         except Exception as e:
             db.sql("update run_topics set status='failed', error=%s where id=%s", (f'{type(e).__name__}: {e}'[:1000], rt['id']))
             pipeline.log(run['id'], rt['id'], f'FAILED: {type(e).__name__}: {e}')
+            db.event(run['created_by'], 'pdf failed', run['id'], topic=rt['name'], error=f'{type(e).__name__}: {e}'[:200])
     db.sql(FINISH, {'id': run['id']})
 
 

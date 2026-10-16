@@ -5,7 +5,7 @@ A Streamlit app that turns a textbook PDF plus a topic list into branded study P
 - **GATE**: one Edwisely GATE topic guide per topic (concept notes, worked examples, figures, traps, revision card, previous-year questions, practice, sample paper, answer key).
 - **Non-GATE**: one learning-module PDF (topics, case study, practice, model answers, revision sheet), shaped by an optional user prompt.
 
-Pages: **Generate** (start a run), **Runs** (progress, warnings, previews, downloads), **Library** (upload books, review units).
+Pages: **Generate** (start a run), **Runs** (progress, warnings, previews, downloads), **Library** (upload books, review units), **Usage** (cost, PDFs and activity per person; admins see everyone, others their own), **Admin** (admins only: people, passwords, roles).
 Plan and design decisions: `../PLAN.md`.
 
 ## One-time setup (you do these)
@@ -26,12 +26,13 @@ Plan and design decisions: `../PLAN.md`.
 1. Put the **contents of this `app` folder at the root of a private GitHub repository** (so `streamlit_app.py`, `requirements.txt`, `packages.txt` are at the top level).
 2. https://share.streamlit.io → **Create app** → pick the repo, main file `streamlit_app.py`.
 3. **Advanced settings → Secrets**: paste the values, using `.streamlit/secrets.toml.example` as the template.
-4. After deploying, **Settings → Sharing**: make the app **private** and invite your team's emails. This is what keeps
-   everyone else out (Streamlit checks their login), so a link that leaks cannot spend your credits.
-5. Inside the app each person types their work email once per browser session; it is recorded as "created by".
-   `ALLOWED_DOMAINS` (default `edwisely.com`) and/or `ALLOWED_EMAILS` say which emails it accepts; `ADMINS` may delete
-   anyone's runs and books (everyone else only their own). Streamlit no longer tells apps who the viewer is, so this
-   email is trusted, not verified.
+4. **Open the app straight after deploying and create the first admin account** (yours): with no accounts yet, the
+   sign-in page offers this once.
+5. On the **Admin** page, add each person: the app makes a password and shows it once, ready to copy and send to them
+   (Streamlit's own invite email cannot carry it). People sign in with email and password and can change it in the
+   sidebar. Admins reset passwords, make admins, and deactivate or delete accounts; they may delete anyone's runs and
+   books, everyone else only their own. Passwords are stored only as salted scrypt hashes.
+6. Optional extra layer: **Settings → Sharing → private** on Community Cloud, inviting the same people.
 
 ### 4. Keep the free Supabase project awake
 Free projects pause after a week without use. Open the app weekly, or add a scheduled ping.

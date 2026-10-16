@@ -74,9 +74,11 @@ class Job:
         rows = db.sql('select output from steps where run_topic_id=%s and name=%s', (self.rt['id'], name))
         return rows[0]['output'] if rows else None
 
-    def charge(self, usage):
-        """Add the cost of model calls to the topic and the run; stop the run at its cap."""
+    def charge(self, usage, name):
+        """Add the cost of a model call to the topic, the run and the usage history; stop the run at its cap."""
         if not usage['cost']: return
+        db.event(self.run['created_by'], 'model call', self.run['id'], usage['cost'], topic=self.rt['name'], step=name,
+                 provider=self.provider, model=PROVIDERS[self.provider]['model'], input_tokens=usage['in'], output_tokens=usage['out'])
         db.sql('update run_topics set cost_usd = cost_usd + %s where id=%s', (usage['cost'], self.rt['id']))
         run = db.sql('update runs set cost_usd = cost_usd + %s, heartbeat_at=now() where id=%s returning cost_usd, cost_cap', (usage['cost'], self.run['id']))[0]
         if run['cost_usd'] >= run['cost_cap']: raise CapReached()
@@ -85,7 +87,7 @@ class Job:
         db.sql('insert into steps (run_topic_id, name, output, input_tokens, output_tokens, cost_usd) values (%s,%s,%s::jsonb,%s,%s,%s) '
                'on conflict (run_topic_id, name) do update set output=excluded.output, input_tokens=excluded.input_tokens, '
                'output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd', (self.rt['id'], name, json.dumps(output), usage['in'], usage['out'], usage['cost']))
-        self.charge(usage)
+        self.charge(usage, name)
 
     def step(self, name, fn):
         """A step that makes no model call of its own. Runs once; the output is saved."""
@@ -151,7 +153,7 @@ class Job:
         if out is None or any(not p and h for p, _, h in probs):
             db.sql('insert into steps (run_topic_id, name, output, cost_usd) values (%s,%s,%s::jsonb,%s) on conflict (run_topic_id, name) do update set output=excluded.output',
                    (self.rt['id'], name + '_failed', json.dumps({'raw': raw[:200_000], 'problems': [m for _, m, _ in probs]}), usage['cost']))
-            self.charge(usage)
+            self.charge(usage, name + '_failed')
             raise llm.LLMError(f'the model could not produce a usable "{name}" part: ' + '; '.join(m for _, m, _ in probs[:2]))
         items = [x for x in probs if x[0]]
         if items:
@@ -367,6 +369,7 @@ def process(rt, run):
     """Run one topic through its pipeline. Raises CapReached or Cancelled; the worker handles those."""
     job = Job(rt, run)
     (gate if run['mode'] == 'gate' else nongate)(job)
+    db.event(run['created_by'], 'pdf ready', run['id'], topic=rt['name'])
 
 
 def rerender(rt, run, content):

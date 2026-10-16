@@ -1,5 +1,5 @@
 """Database (direct Postgres connection to Supabase) and file storage (Supabase Storage)."""
-import functools, os, re
+import functools, json, os, re
 from urllib.parse import quote, unquote
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -34,6 +34,13 @@ def many(query, rows):
     """Run one statement for many rows (bulk insert)."""
     with _pool().connection() as conn:
         conn.cursor().executemany(query, rows)
+
+
+def event(email, action, run_id=None, cost=0, **detail):
+    """Record one usage event for the Usage page (sign in, run started, model call, PDF ready, download...).
+    Tracking never breaks a page or a run, so a failure here is ignored."""
+    try: sql('insert into events (email, action, run_id, cost_usd, detail) values (%s,%s,%s,%s,%s::jsonb)', (email, action, run_id, cost, json.dumps(detail, default=str)))
+    except Exception: pass
 
 
 @functools.cache

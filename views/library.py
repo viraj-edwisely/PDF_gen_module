@@ -27,6 +27,7 @@ if submitted:
             try:
                 with st.spinner('Uploading...'): db.upload('books', f'{book_id}.pdf', data, 'application/pdf')
                 db.sql("update books set storage_path=%s, status='queued', step='Waiting' where id=%s", (f'{book_id}.pdf', book_id))
+                db.event(user(), 'uploaded book', title=title, mb=round(pdf.size / 2**20, 1))
                 st.success('Uploaded. It is being processed in the background; it appears as ready below in a few minutes.')
             except Exception as e:
                 db.sql('delete from books where id=%s', (book_id,)); st.error(f'The upload failed: {e}')
@@ -64,7 +65,7 @@ def book_list():
                     st.write('This removes the book, its text and its search index. Finished PDFs from earlier runs are kept.')
                     if st.button('Yes, delete', key=f"del{b['id']}"):
                         db.remove('books', [b['storage_path']] if b['storage_path'] else [])
-                        db.sql('delete from books where id=%s', (b['id'],))
+                        db.sql('delete from books where id=%s', (b['id'],)); db.event(user(), 'deleted book', title=b['title'])
                         st.rerun()
 
 

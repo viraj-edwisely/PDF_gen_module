@@ -40,6 +40,26 @@ create table if not exists logs (                  -- what happened during a run
   at timestamptz default now(), text text);
 create index if not exists logs_run on logs (run_id, id);
 
+create table if not exists users (                 -- people who may sign in, managed on the Admin page; passwords only as scrypt hashes
+  email text primary key, name text, password_hash text not null, is_admin boolean default false, active boolean default true,
+  created_by text, created_at timestamptz default now(), last_login timestamptz);
+
+create table if not exists events (                -- usage per person (Usage page); no foreign keys, so it keeps its rows when runs or books are deleted
+  id bigserial primary key, at timestamptz default now(), email text, action text, run_id bigint, cost_usd numeric default 0, detail jsonb default '{}');
+create index if not exists events_at on events (at);
+
+do $$ begin
+  if not exists (select 1 from events) then        -- first start with usage tracking: carry over the existing runs
+    insert into events (at, email, action, run_id, detail)
+      select created_at, created_by, 'run started', id, jsonb_build_object('title', title, 'writer', provider) from runs;
+    insert into events (at, email, action, run_id, cost_usd, detail)
+      select created_at, created_by, 'model call', id, cost_usd, jsonb_build_object('step', 'all calls of the run (before usage tracking)', 'provider', provider) from runs where cost_usd > 0;
+    insert into events (at, email, action, run_id, detail)
+      select r.created_at, r.created_by, case when t.pdf_path is null then 'pdf failed' else 'pdf ready' end, r.id, jsonb_build_object('topic', t.name)
+      from run_topics t join runs r on r.id = t.run_id where t.pdf_path is not null or t.status = 'failed';
+  end if;
+end $$;
+
 -- added after the first release (safe to repeat)
 alter table runs add column if not exists title text;                          -- the topic names, for the run list
 alter table books add column if not exists progress real default 0;            -- background processing of uploads
@@ -50,3 +70,4 @@ alter table books enable row level security;   alter table pages enable row leve
 alter table units enable row level security;   alter table chunks enable row level security;
 alter table runs enable row level security;    alter table run_topics enable row level security;
 alter table steps enable row level security;   alter table logs enable row level security;
+alter table events enable row level security;  alter table users enable row level security;

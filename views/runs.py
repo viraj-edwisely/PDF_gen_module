@@ -80,7 +80,8 @@ def topic_card(run, t):
         if not t['pdf_path']: return
         c1, c2, c3 = st.columns([1, 1, 2])
         stem = re.sub(r'\W+', '_', t['name']).strip('_')
-        c1.download_button('⬇ Download PDF', fetch(t['pdf_path']), file_name=stem + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary')
+        c1.download_button('⬇ Download PDF', fetch(t['pdf_path']), file_name=stem + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary',
+                           on_click=db.event, args=(user(), 'downloaded', run['id']), kwargs={'file': stem + '.pdf'})
         c2.download_button('Download JSON', fetch(t['json_path']), file_name=stem + '.json', key=f"json{t['id']}")
         if c3.toggle('Preview first pages', key=f"pv{t['id']}"):
             doc = pymupdf.open(stream=fetch(t['pdf_path']), filetype='pdf')
@@ -94,7 +95,7 @@ def topic_card(run, t):
                 st.success(f'Started run #{new}. Refresh the list to open it.')
             fixed = st.file_uploader('Or upload a corrected JSON (download it above, edit it, upload it here): re-renders without the model', type='json', key=f"up{t['id']}")
             if fixed and st.button('Re-render from this JSON', key=f"rr{t['id']}"):
-                try: pipeline.rerender(t, run, json.loads(fixed.getvalue())); fetch.clear(); st.success('Done: the PDF was replaced.')
+                try: pipeline.rerender(t, run, json.loads(fixed.getvalue())); fetch.clear(); db.event(user(), 're-rendered', run['id'], topic=t['name']); st.success('Done: the PDF was replaced.')
                 except Exception as e: st.error(f'Could not render: {e}')
 
 
@@ -122,12 +123,14 @@ def show(run_id, was_active):
         jobs.resume_run(run_id); st.rerun()
     if ready and b3.button('Prepare zip of all PDFs', help='All ready PDFs of this run plus INDEX.xlsx, a sheet that lists them with their counts and notes.'):
         st.session_state[f'zip{run_id}'] = build_zip(run, topics)
-    if f'zip{run_id}' in st.session_state: b3.download_button('⬇ Download zip', st.session_state[f'zip{run_id}'], file_name=f'run_{run_id}.zip', mime='application/zip')
+    if f'zip{run_id}' in st.session_state: b3.download_button('⬇ Download zip', st.session_state[f'zip{run_id}'], file_name=f'run_{run_id}.zip', mime='application/zip',
+                                                              on_click=db.event, args=(user(), 'downloaded', run_id), kwargs={'file': f'run_{run_id}.zip'})
     if can_manage(run['created_by']):
         with b4.popover('Delete run'):
             if st.button('Yes, delete the run and its files', key=f'delrun{run_id}'):
                 db.remove('outputs', [p for t in topics for p in (t['pdf_path'], t['json_path']) if p])
-                db.sql('delete from runs where id=%s', (run_id,)); st.session_state.pop('runs_table', None); st.rerun()
+                db.sql('delete from runs where id=%s', (run_id,)); db.event(user(), 'deleted run', run_id, title=title(run))
+                st.session_state.pop('runs_table', None); st.rerun()
     for t in topics: topic_card(run, t)
     with st.expander('Log'):
         rows = db.sql('select l.at, t.name, l.text from logs l left join run_topics t on t.id = l.run_topic_id where l.run_id=%s order by l.id desc limit 400', (run_id,))
