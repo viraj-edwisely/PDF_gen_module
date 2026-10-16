@@ -8,25 +8,26 @@ def _list(name, default=''):
 
 
 def user():
-    """The viewer's email (Community Cloud private app), or 'local' on a laptop run that allows it."""
-    return (getattr(st.user, 'email', None) or 'local').lower()
+    """The viewer's work email, as typed on the first page (see require_access)."""
+    return st.session_state.get('email', '')
 
 
 def require_access():
-    """Stop the page unless the viewer is allowed: an email in ALLOWED_EMAILS or a domain in ALLOWED_DOMAINS
-    (default edwisely.com). Without a signed-in email (a public app, or a laptop) only ALLOW_LOCAL = "true" lets you in."""
-    email = getattr(st.user, 'email', None)
-    if not email:
-        if str(secret('ALLOW_LOCAL')).lower() == 'true': return
-        st.error('Sign-in is required. Make the app private in Streamlit Community Cloud (Settings → Sharing) and invite your team. '
-                 'For a run on your own computer, add ALLOW_LOCAL = "true" to .streamlit/secrets.toml.')
-        st.stop()
-    email = email.lower()
-    if email not in _list('ALLOWED_EMAILS') and email.split('@')[-1] not in _list('ALLOWED_DOMAINS', 'edwisely.com'):
-        st.error(f'{email} does not have access to this app. Ask an admin to add you.'); st.stop()
+    """Ask once per browser session for the viewer's work email and stop the page unless it is in ALLOWED_EMAILS
+    or its domain in ALLOWED_DOMAINS (default edwisely.com). The email is not verified: who can open the app at all
+    is decided by keeping the app private on Community Cloud (Settings → Sharing)."""
+    if user(): return st.sidebar.caption(f'Working as {user()}')
+    st.title('Edwisely PDF Builder')
+    with st.form('who'):
+        email = st.text_input('Your work email', placeholder='name@edwisely.com', autocomplete='email').strip().lower()
+        sent = st.form_submit_button('Continue', type='primary')
+    if sent and email:
+        if email in _list('ALLOWED_EMAILS') or email.split('@')[-1] in _list('ALLOWED_DOMAINS', 'edwisely.com'):
+            st.session_state.email = email; st.rerun()
+        st.error(f'{email} does not have access to this app. Ask an admin to add you.')
+    st.stop()
 
 
 def can_manage(owner):
     """Delete and other destructive actions: the person who created the item, or an admin (ADMINS)."""
-    me = user()
-    return me == (owner or '').lower() or me in _list('ADMINS') or me == 'local'
+    return user() == (owner or '').lower() or user() in _list('ADMINS')

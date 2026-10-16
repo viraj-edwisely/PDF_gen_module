@@ -26,8 +26,12 @@ Plan and design decisions: `../PLAN.md`.
 1. Put the **contents of this `app` folder at the root of a private GitHub repository** (so `streamlit_app.py`, `requirements.txt`, `packages.txt` are at the top level).
 2. https://share.streamlit.io → **Create app** → pick the repo, main file `streamlit_app.py`.
 3. **Advanced settings → Secrets**: paste the values, using `.streamlit/secrets.toml.example` as the template.
-4. After deploying, **Settings → Sharing**: make the app **private** and add the email addresses of your team. The app records the viewer's email as "created by".
-5. Access inside the app (secrets): `ALLOWED_DOMAINS` (default `edwisely.com`) and/or `ALLOWED_EMAILS` say who may use it; `ADMINS` may delete anyone's runs and books (everyone else only their own). Without a signed-in email the app refuses to open, so a public app cannot spend your credits.
+4. After deploying, **Settings → Sharing**: make the app **private** and invite your team's emails. This is what keeps
+   everyone else out (Streamlit checks their login), so a link that leaks cannot spend your credits.
+5. Inside the app each person types their work email once per browser session; it is recorded as "created by".
+   `ALLOWED_DOMAINS` (default `edwisely.com`) and/or `ALLOWED_EMAILS` say which emails it accepts; `ADMINS` may delete
+   anyone's runs and books (everyone else only their own). Streamlit no longer tells apps who the viewer is, so this
+   email is trusted, not verified.
 
 ### 4. Keep the free Supabase project awake
 Free projects pause after a week without use. Open the app weekly, or add a scheduled ping.
@@ -36,7 +40,7 @@ Free projects pause after a week without use. Open the app weekly, or add a sche
 ```
 pip install -r requirements.txt
 # graphviz must be installed for graph/automaton/tree figures (https://graphviz.org/download/)
-# put the secrets in .streamlit/secrets.toml, plus ALLOW_LOCAL = "true" (there is no sign-in on a laptop)
+# put the secrets in .streamlit/secrets.toml
 streamlit run streamlit_app.py
 python -m pytest tests        # offline checks of the content rules and the renderers (pip install pytest)
 ```
