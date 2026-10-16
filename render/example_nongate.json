@@ -1,0 +1,62 @@
+{
+  "title": "Statistical Communication & Decision Use",
+  "description": "Reading and writing statistics for real decisions: honestly communicating uncertainty, spotting p-hacking and base-rate neglect before they mislead a room, and building a defensible recommendation out of evidence that is never perfectly certain.",
+  "subject": "Business Statistics",
+  "study_time": "3-4 hours, self-paced",
+  "audience": "Undergraduate & MBA students of Business Statistics and Analytics",
+  "topics": [
+    {
+      "title": "Reading & Writing Statistics for Managerial Decisions",
+      "tagline": "A number without its context is not yet information",
+      "blocks": [
+        {"type": "situation", "text": "A slide says \"Customer satisfaction: 7.8.\" Nothing in that sentence tells a manager whether 7.8 is good or bad, how many customers it is based on, or what to do differently tomorrow."},
+        {"type": "table", "title": "Table 1.1 · What every statistical claim should carry with it", "header": ["Element", "Why it matters"],
+         "rows": [["What was measured, and how", "A satisfaction score means something different depending on the scale and question wording"],
+                  ["Sample size", "The same average from 20 and from 2,000 respondents carries very different weight"],
+                  ["A measure of uncertainty", "A confidence interval or margin of error, not just a point estimate"],
+                  ["A comparison baseline", "7.8 compared to what: last quarter, a competitor, a target?"]]},
+        {"type": "concept", "text": "Compress any finding into **one sentence** an executive could act on: \"Satisfaction is 7.8 out of 10, based on 150 responses (likely true value 7.6-8.0), essentially unchanged from last quarter's 7.7.\""},
+        {"type": "quick_check", "items": [
+          {"q": "Name three things a statistical claim needs besides the number itself.", "a": "Any three of: what was measured and how, the sample size, a measure of uncertainty, a comparison baseline, or the practical implication."}]}
+      ]
+    },
+    {
+      "title": "Communicating Uncertainty",
+      "tagline": "Confidence intervals and margin of error: three views of the same honesty",
+      "blocks": [
+        {"type": "situation", "text": "Two surveys both report average satisfaction of 7.8, one from 150 responses and one from 25. As bare numbers they look identical."},
+        {"type": "worked_example", "text": "n = 150, mean = 7.8, SD = 1.4: standard error = 0.114, 95% CI = (7.57, 8.03).\n\nn = 25, same mean and SD: standard error = 0.280, 95% CI = (7.22, 8.38)."},
+        {"type": "figure", "kind": "bars", "spec": {"categories": ["n = 25", "n = 150"], "series": [{"name": "95% CI half-width", "values": [0.58, 0.23]}]},
+         "caption": "Same point estimate (7.8), very different precision: the larger sample's margin is less than half as wide"},
+        {"type": "pitfall", "text": "Presenting only the point estimate with the confidence interval buried in an appendix. The width of the interval is often the most decision-relevant piece of information."},
+        {"type": "quick_check", "items": [
+          {"q": "Why is the n=150 interval narrower than the n=25 interval?", "a": "Standard error is proportional to 1/sqrt(n), so a larger sample gives a narrower interval around the same estimate."}]}
+      ]
+    }
+  ],
+  "case_study": {
+    "title": "The Sales Manager Who Fired the Wrong People",
+    "subtitle": "Reading Regression to the Mean as a Management Signal",
+    "paragraphs": [
+      {"lead": "Situation.", "text": "A regional sales manager rewards the top 10% of performers and puts the bottom 10% on an improvement plan."},
+      {"lead": "What happened in Q2.", "text": "The former top performers fell and the former bottom performers rose, and the manager credited discipline for the rise and blamed rewards for the fall."},
+      {"lead": "What the data shows.", "text": "Quarter-to-quarter correlation was only about 0.21, so extreme scorers regress toward the mean with no intervention at all."}
+    ],
+    "discussion": "What evidence would have distinguished \"the plan worked\" from \"this is regression to the mean\"?"
+  },
+  "practice": [
+    {"tag": "Reading & writing stats · Application", "question": "Rewrite the slide bullet \"Sales are up 12%\" as a proper one-sentence statistical claim. What else would you need to know?", "answer": "Sales rose 12% quarter-over-quarter (based on all transactions, n = ...), against a typical seasonal rise of X%, likely true range Y-Z%. You need the population, a baseline and a measure of uncertainty."},
+    {"tag": "Communicating uncertainty · Explain", "question": "Explain what a 95% confidence interval does and does not claim.", "answer": "It does not claim a 95% probability that the true value lies in this one interval. About 95% of intervals built this way over repeated sampling would contain the true value."}
+  ],
+  "revision": {
+    "concepts": [
+      {"title": "01 · Reading & writing stats", "points": ["Every claim needs: what, sample size, uncertainty, baseline, implication"]},
+      {"title": "02 · Communicating uncertainty", "points": ["Same mean, n=25 vs n=150: interval more than halves", "A 95% CI describes the method's reliability"]}
+    ],
+    "distinctions": {"header": ["This", "vs. this", "Key difference"], "rows": [["Point estimate", "Confidence interval", "A single number vs a range reflecting precision"]]},
+    "mistakes": [{"title": "Reporting a number with no uncertainty", "text": "The interval is often the most decision-relevant part of the finding."},
+                 {"title": "Crediting an intervention for regression to the mean", "text": "Extreme groups revert on their own when correlation between periods is imperfect."}],
+    "checklist_title": "Questions to ask before presenting any statistic",
+    "checklist": ["Have I included the sample size and a measure of uncertainty?", "Can I state the finding, its uncertainty and the action in one sentence?"]
+  }
+}

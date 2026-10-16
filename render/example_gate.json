@@ -1,0 +1,1950 @@
+{
+ "paper": "CS",
+ "exam": "GATE 2027",
+ "subject": "Operating System",
+ "module_id": "CS-M21",
+ "module_name": "Operating System I",
+ "topic_id": "CS-S10-T05",
+ "topic_name": "CPU Scheduling Algorithms",
+ "syllabus_line": "Operating System: processes, threads, inter-process communication, concurrency and synchronization; CPU and I/O scheduling.",
+ "objectives": [
+  "Explain where the CPU scheduler, dispatcher and scheduling decisions fit in the process life cycle",
+  "Define and compute CPU utilisation, throughput, completion, turnaround, waiting and response time",
+  "Schedule processes with FCFS, SJF, SRTF, Priority, Round Robin, HRRN and multilevel feedback queues using a Gantt chart",
+  "Predict the next CPU burst with exponential averaging",
+  "Compare algorithms on the same workload and spot starvation, the convoy effect and context-switch overhead"
+ ],
+ "prerequisites": [
+  "Process states (new, ready, running, waiting, terminated) and the ready queue"
+ ],
+ "notes": [
+  {
+   "heading": "Where the CPU scheduler fits",
+   "blocks": [
+    "A process alternates between **CPU bursts** (computing) and **I/O bursts** (waiting for a device). This is the CPU-I/O burst cycle. A **CPU-bound** process has a few long CPU bursts; an **I/O-bound** process has many short ones. Scheduling decides which ready process gets the CPU next.",
+    {
+     "type": "table",
+     "header": [
+      "Scheduler",
+      "Moves a process",
+      "Purpose",
+      "How often it runs"
+     ],
+     "widths": [
+      90,
+      90,
+      170,
+      120
+     ],
+     "rows": [
+      [
+       "Long-term (job)",
+       "new → ready",
+       "Controls the degree of multiprogramming",
+       "Rarely (seconds to minutes)"
+      ],
+      [
+       "Short-term (CPU)",
+       "ready → running",
+       "Picks the next process for the CPU",
+       "Very often (milliseconds), so it must be fast"
+      ],
+      [
+       "Medium-term",
+       "memory ↔ disk (swap)",
+       "Reduces memory pressure; tunes the process mix",
+       "Occasionally"
+      ]
+     ]
+    },
+    "The **dispatcher** gives the CPU to the process the short-term scheduler picked. It performs the context switch, switches to user mode and jumps to the right instruction. The time this takes is the **dispatch latency**.",
+    "A scheduling decision can happen at four events:",
+    {
+     "type": "table",
+     "header": [
+      "#",
+      "Event",
+      "Decision forced?"
+     ],
+     "widths": [
+      30,
+      270,
+      170
+     ],
+     "rows": [
+      [
+       "1",
+       "Running process blocks (e.g. I/O request)",
+       "Yes, the CPU is free"
+      ],
+      [
+       "2",
+       "Running process terminates",
+       "Yes, the CPU is free"
+      ],
+      [
+       "3",
+       "Timer interrupt (running → ready)",
+       "Only in a pre-emptive scheduler"
+      ],
+      [
+       "4",
+       "A process becomes ready (arrival or I/O completion)",
+       "Only in a pre-emptive scheduler"
+      ]
+     ]
+    },
+    "A **non-pre-emptive** scheduler decides only at events 1 and 2: once a process gets the CPU it keeps it until it blocks or ends. A **pre-emptive** scheduler can also decide at events 3 and 4, taking the CPU away from the running process.",
+    {
+     "type": "example",
+     "title": "pre-emptive or not?",
+     "problem": "P3 is running. P1, which was waiting on a disk read, finishes its I/O and becomes ready; P1 has higher priority than P3. What happens under a non-pre-emptive and a pre-emptive priority scheduler?",
+     "solution": "This is event 4 (a process becomes ready).\n\n**Non-pre-emptive:** no decision is made now. P3 keeps the CPU until it blocks or terminates; only then is P1 chosen.\n\n**Pre-emptive:** the scheduler runs immediately, sees that P1 outranks P3, saves P3's context, puts P3 back in the ready queue and dispatches P1."
+    },
+    {
+     "type": "note",
+     "text": "**GATE habit:** assume zero context-switch time and zero dispatch latency unless the question gives a value."
+    }
+   ]
+  },
+  {
+   "heading": "Scheduling criteria and the time metrics",
+   "blocks": [
+    "Every scheduling question reduces to a few measurements. Arrival time (AT) and burst time (BT) are given; the Gantt chart gives the completion time (CT) and the first time each process runs.",
+    {
+     "type": "table",
+     "header": [
+      "Metric",
+      "Formula",
+      "Meaning",
+      "Goal"
+     ],
+     "widths": [
+      100,
+      140,
+      160,
+      70
+     ],
+     "rows": [
+      [
+       "CPU utilisation",
+       "busy time ÷ total time × 100%",
+       "Share of time the CPU does useful work",
+       "Maximise"
+      ],
+      [
+       "Throughput",
+       "processes completed ÷ total time",
+       "Jobs finished per unit time",
+       "Maximise"
+      ],
+      [
+       "Turnaround time (TAT)",
+       "TAT = CT − AT",
+       "Arrival to completion",
+       "Minimise"
+      ],
+      [
+       "Waiting time (WT)",
+       "WT = TAT − BT",
+       "Total time spent in the ready queue",
+       "Minimise"
+      ],
+      [
+       "Response time (RT)",
+       "RT = first run − AT",
+       "Arrival to first CPU allocation",
+       "Minimise"
+      ]
+     ]
+    },
+    {
+     "type": "bullets",
+     "items": [
+      "WT = TAT − BT holds for pure CPU processes. If a process also does I/O, subtract the I/O time too: WT = TAT − CPU time − I/O time.",
+      "In a non-pre-emptive schedule a process runs to completion once started, so $RT = WT$. In a pre-emptive schedule RT ≤ WT.",
+      "If no process is ready, the CPU is **idle**. Idle time counts in the total time for utilisation and throughput."
+     ]
+    },
+    {
+     "type": "example",
+     "title": "computing every metric",
+     "problem": "P1 (arrival 0, burst 3), P2 (5, 2), P3 (6, 4) are scheduled FCFS. Find CPU utilisation, throughput, average TAT and average WT.",
+     "solution": [
+      "Gantt chart: P1 runs 0-3. Nothing is ready at 3, so the CPU idles until P2 arrives at 5. P2 runs 5-7, P3 runs 7-11.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          3
+         ],
+         [
+          "idle",
+          3,
+          5
+         ],
+         [
+          "P2",
+          5,
+          7
+         ],
+         [
+          "P3",
+          7,
+          11
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT",
+        "RT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         3,
+         3,
+         3,
+         0,
+         0
+        ],
+        [
+         "P2",
+         5,
+         2,
+         7,
+         2,
+         0,
+         0
+        ],
+        [
+         "P3",
+         6,
+         4,
+         11,
+         5,
+         1,
+         1
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**3.33**",
+         "**0.33**",
+         "**0.33**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Busy time = 3 + 2 + 4 = 9 out of 11, so utilisation = 9/11 = **81.82%**. Throughput = 3 processes / 11 units = **0.27 per unit**.",
+      "Average TAT = (3 + 2 + 5)/3 = **3.33**; average WT = (0 + 0 + 1)/3 = **0.33**."
+     ]
+    }
+   ]
+  },
+  {
+   "heading": "First-Come, First-Served (FCFS)",
+   "blocks": [
+    "**Rule:** run processes in order of arrival, using a FIFO ready queue. **Type:** non-pre-emptive.",
+    "FCFS is simple and fair in the sense that every process eventually runs, so there is **no starvation**. Its weakness is that the average waiting time depends heavily on the order of arrival.",
+    "**Convoy effect:** one long CPU-bound process holds the CPU while many short, I/O-bound processes queue behind it. The I/O devices sit idle meanwhile. When the long job finally blocks, the short jobs rush through and all block on I/O, leaving the CPU idle. Both CPU and device utilisation drop.",
+    {
+     "type": "example",
+     "title": "order matters (convoy effect)",
+     "problem": "Three processes arrive at time 0 with bursts P1 = 20, P2 = 2, P3 = 2. Compare average WT for arrival orders P1, P2, P3 and P2, P3, P1.",
+     "solution": [
+      {
+       "type": "subhead",
+       "text": "Order P1, P2, P3:"
+      },
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          20
+         ],
+         [
+          "P2",
+          20,
+          22
+         ],
+         [
+          "P3",
+          22,
+          24
+         ]
+        ]
+       }
+      },
+      "WT = 0, 20, 22, so average = 42/3 = **14**.",
+      {
+       "type": "subhead",
+       "text": "Order P2, P3, P1:"
+      },
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P2",
+          0,
+          2
+         ],
+         [
+          "P3",
+          2,
+          4
+         ],
+         [
+          "P1",
+          4,
+          24
+         ]
+        ]
+       }
+      },
+      "WT = 0, 2, 4, so average = 6/3 = **2**.",
+      "Same total work, but the average wait is 7 times larger when the long job arrives first. That is the convoy effect in numbers."
+     ]
+    }
+   ]
+  },
+  {
+   "heading": "Shortest Job First (SJF, non-pre-emptive)",
+   "blocks": [
+    "**Rule:** whenever the CPU becomes free, pick the arrived process with the smallest next CPU burst. Ties go to the earlier arrival. **Type:** non-pre-emptive.",
+    "**Why it is optimal:** for processes that are all available together, SJF gives the minimum average waiting time. Suppose a long job L runs just before a short job S. Swapping them cuts S's wait by L and adds S to L's wait. Since S < L, the total wait drops. Repeating the swap until jobs are sorted shortest first can only reduce total waiting time.",
+    "**Limitations:** the length of the next burst is not known in advance, so it must be predicted (see 2.6). Long jobs can **starve** if short jobs keep arriving.",
+    {
+     "type": "example",
+     "title": "SJF with arrivals",
+     "problem": "P1 (arrival 0, burst 6), P2 (1, 8), P3 (2, 7), P4 (3, 3). Find the average WT and TAT under non-pre-emptive SJF.",
+     "solution": [
+      "At t = 0 only P1 has arrived, so P1 runs 0-6. Shorter jobs arrive meanwhile, but SJF does not pre-empt.",
+      "At t = 6 the ready jobs are P2 (8), P3 (7), P4 (3). P4 is shortest, so it runs 6-9. Then P3 runs 9-16 and P2 runs 16-24.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          6
+         ],
+         [
+          "P4",
+          6,
+          9
+         ],
+         [
+          "P3",
+          9,
+          16
+         ],
+         [
+          "P2",
+          16,
+          24
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT",
+        "RT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         6,
+         6,
+         6,
+         0,
+         0
+        ],
+        [
+         "P2",
+         1,
+         8,
+         24,
+         23,
+         15,
+         15
+        ],
+        [
+         "P3",
+         2,
+         7,
+         16,
+         14,
+         7,
+         7
+        ],
+        [
+         "P4",
+         3,
+         3,
+         9,
+         6,
+         3,
+         3
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**12.25**",
+         "**6.25**",
+         "**6.25**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average WT = 25/4 = **6.25**; average TAT = 49/4 = **12.25**."
+     ]
+    },
+    {
+     "type": "trap",
+     "text": "SJF chooses only among processes that have **already arrived**. Do not sort the whole list by burst time when arrival times differ."
+    }
+   ]
+  },
+  {
+   "heading": "Shortest Remaining Time First (SRTF)",
+   "blocks": [
+    "**Rule:** the pre-emptive form of SJF. At every arrival and every completion, run the process with the smallest **remaining** time. A new arrival pre-empts the running process only if its burst is strictly smaller than the running process's remaining time. **Type:** pre-emptive.",
+    "SRTF gives the minimum average waiting time for any given set of arrivals (ignoring context-switch cost). It still needs burst estimates, can starve long jobs and causes more context switches than SJF.",
+    {
+     "type": "example",
+     "title": "SRTF step by step",
+     "problem": "P1 (arrival 0, burst 8), P2 (1, 4), P3 (2, 9), P4 (3, 5). Find average WT, TAT and RT under SRTF, and count the context switches.",
+     "solution": [
+      "t = 0: only P1, it starts.",
+      "t = 1: P2 arrives with 4 < P1's remaining 7. P2 pre-empts P1.",
+      "t = 2 and 3: P3 (9) and P4 (5) arrive, but P2's remaining time (3, then 2) is smaller, so P2 runs on to 5.",
+      "t = 5: remaining times are P1 7, P3 9, P4 5. P4 runs 5-10, then P1 10-17, then P3 17-26.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          1
+         ],
+         [
+          "P2",
+          1,
+          5
+         ],
+         [
+          "P4",
+          5,
+          10
+         ],
+         [
+          "P1",
+          10,
+          17
+         ],
+         [
+          "P3",
+          17,
+          26
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT",
+        "RT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         8,
+         17,
+         17,
+         9,
+         0
+        ],
+        [
+         "P2",
+         1,
+         4,
+         5,
+         4,
+         0,
+         0
+        ],
+        [
+         "P3",
+         2,
+         9,
+         26,
+         24,
+         15,
+         15
+        ],
+        [
+         "P4",
+         3,
+         5,
+         10,
+         7,
+         2,
+         2
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**13**",
+         "**6.5**",
+         "**4.25**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average WT = 26/4 = **6.5**; average TAT = 52/4 = **13**; average RT = 17/4 = **4.25**.",
+      "Context switches between processes: P1→P2, P2→P4, P4→P1, P1→P3 = **4**. Only one of them (at t = 1) is a pre-emption; the others happen because a process finished."
+     ]
+    },
+    {
+     "type": "trap",
+     "text": "When asked for the number of context switches, check whether the first dispatch at t = 0 and the final exit are counted. Many GATE questions say so explicitly; if they do not, count switches between two different processes."
+    }
+   ]
+  },
+  {
+   "heading": "Predicting the next CPU burst",
+   "blocks": [
+    "SJF and SRTF need the next burst length, which is not known. The usual estimate is the **exponential average** of past bursts:",
+    {
+     "type": "formula",
+     "latex": "\\tau_{n+1} = \\alpha \\cdot t_n + (1-\\alpha)\\cdot\\tau_n,\\quad 0 \\leq \\alpha \\leq 1"
+    },
+    "Here $t_n$ is the actual length of the n-th burst and $\\tau_n$ is the prediction made for it. With α = 0 the prediction never changes; with α = 1 only the last burst counts; α = 0.5 weighs recent and past history equally. Expanding the formula shows older bursts get geometrically smaller weights:",
+    {
+     "type": "formula",
+     "latex": "\\tau_{n+1} = \\alpha t_n + (1-\\alpha)\\alpha t_{n-1} + \\ldots + (1-\\alpha)^{n-1}\\alpha t_1 + (1-\\alpha)^n \\tau_1"
+    },
+    {
+     "type": "example",
+     "title": "exponential averaging",
+     "problem": "α = 0.5 and the initial guess $\\tau_1$ = 10 ms. The first four actual bursts are 6, 4, 6 and 4 ms. Find $\\tau_5$.",
+     "solution": [
+      {
+       "type": "table",
+       "header": [
+        "n",
+        "Actual $t_n$",
+        "Prediction $\\tau_n$",
+        "$\\tau_{n+1} = 0.5\\,t_n + 0.5\\,\\tau_n$"
+       ],
+       "rows": [
+        [
+         1,
+         6,
+         "10",
+         "3 + 5 = 8"
+        ],
+        [
+         2,
+         4,
+         "8",
+         "2 + 4 = 6"
+        ],
+        [
+         3,
+         6,
+         "6",
+         "3 + 3 = 6"
+        ],
+        [
+         4,
+         4,
+         "6",
+         "2 + 3 = 5"
+        ]
+       ]
+      },
+      "So $\\tau_5$ = **5 ms**. Notice how the guess of 10 fades out within a few bursts."
+     ]
+    }
+   ]
+  },
+  {
+   "heading": "Priority scheduling",
+   "blocks": [
+    "**Rule:** each process has a priority number and the CPU goes to the highest-priority ready process; equal priorities are served FCFS. In this PDF a **smaller number means higher priority**. SJF is a special case where the priority is the predicted burst.",
+    {
+     "type": "bullets",
+     "items": [
+      "**Non-pre-emptive:** a higher-priority arrival waits until the running process finishes or blocks.",
+      "**Pre-emptive:** a higher-priority arrival takes the CPU at once."
+     ]
+    },
+    "**Starvation** (indefinite blocking): a low-priority process may never run if higher-priority work keeps arriving. The cure is **ageing**: raise the priority of a process the longer it waits. For example, if priority improves by 1 for every 5 time units of waiting, a process at priority 9 reaches priority 5 after waiting 20 units.",
+    {
+     "type": "example",
+     "title": "non-pre-emptive vs pre-emptive priority",
+     "problem": [
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "Arrival",
+        "Burst",
+        "Priority"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         5,
+         3
+        ],
+        [
+         "P2",
+         1,
+         3,
+         1
+        ],
+        [
+         "P3",
+         2,
+         8,
+         4
+        ],
+        [
+         "P4",
+         3,
+         2,
+         2
+        ]
+       ]
+      },
+      "Find the average WT under both variants (smaller number = higher priority)."
+     ],
+     "solution": [
+      "**(a) Non-pre-emptive.** P1 runs 0-5 although P2 arrives at 1. At 5 the ready set is P2 (1), P3 (4), P4 (2), so P2 runs 5-8, P4 8-10, P3 10-18.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          5
+         ],
+         [
+          "P2",
+          5,
+          8
+         ],
+         [
+          "P4",
+          8,
+          10
+         ],
+         [
+          "P3",
+          10,
+          18
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         5,
+         5,
+         5,
+         0
+        ],
+        [
+         "P2",
+         1,
+         3,
+         8,
+         7,
+         4
+        ],
+        [
+         "P3",
+         2,
+         8,
+         18,
+         16,
+         8
+        ],
+        [
+         "P4",
+         3,
+         2,
+         10,
+         7,
+         5
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**8.75**",
+         "**4.25**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average WT = 17/4 = **4.25**.",
+      "**(b) Pre-emptive.** P2 (priority 1) arrives at 1 and pre-empts P1, running 1-4. P4 (2) arrives at 3 but cannot beat P2. At 4: P4 (2) beats P1 (3) and P3 (4), so P4 runs 4-6, P1 finishes 6-10, P3 runs 10-18.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          1
+         ],
+         [
+          "P2",
+          1,
+          4
+         ],
+         [
+          "P4",
+          4,
+          6
+         ],
+         [
+          "P1",
+          6,
+          10
+         ],
+         [
+          "P3",
+          10,
+          18
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT",
+        "RT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         5,
+         10,
+         10,
+         5,
+         0
+        ],
+        [
+         "P2",
+         1,
+         3,
+         4,
+         3,
+         0,
+         0
+        ],
+        [
+         "P3",
+         2,
+         8,
+         18,
+         16,
+         8,
+         8
+        ],
+        [
+         "P4",
+         3,
+         2,
+         6,
+         3,
+         1,
+         1
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**8**",
+         "**3.5**",
+         "**2.25**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average WT = 14/4 = **3.5**. Pre-emption helped the urgent jobs; low-priority P3 waits the same in both."
+     ]
+    },
+    {
+     "type": "trap",
+     "text": "Always check the priority convention. Some GATE questions use \"higher number = higher priority\". Reversing it changes the whole schedule."
+    }
+   ]
+  },
+  {
+   "heading": "Round Robin (RR)",
+   "blocks": [
+    "**Rule:** the ready queue is a circular FIFO. The process at the head runs for at most one **time quantum** q. If it finishes earlier it leaves; otherwise a timer interrupt pre-empts it and it joins the tail. **Type:** pre-emptive.",
+    "**Queue-order rule:** if a process arrives at the same instant another is pre-empted, the new arrival joins the queue first, then the pre-empted process. Processes that arrived during the slice are already in the queue ahead of it. Use this convention unless the question states otherwise.",
+    {
+     "type": "bullets",
+     "items": [
+      "With n processes in the queue, each gets 1/n of the CPU in chunks of q, and no process waits more than (n − 1)q for its next turn. RR has **no starvation**.",
+      "q very large: every burst finishes in one slice, so RR behaves exactly like **FCFS**.",
+      "q very small: many context switches, so overhead dominates. A common rule of thumb is that about 80% of CPU bursts should be shorter than q.",
+      "RR gives good **response time** but usually a higher average TAT than SJF."
+     ]
+    },
+    {
+     "type": "example",
+     "title": "Round Robin with a queue trace",
+     "problem": "P1 (arrival 0, burst 5), P2 (1, 3), P3 (2, 1), P4 (3, 4), quantum q = 2. Find average TAT, WT and RT.",
+     "solution": [
+      "Track the ready queue after every slice (head on the left):",
+      {
+       "type": "table",
+       "header": [
+        "Time",
+        "Runs",
+        "Ready queue after the slice",
+        "Reason"
+       ],
+       "widths": [
+        55,
+        45,
+        150,
+        220
+       ],
+       "rows": [
+        [
+         "0-2",
+         "P1",
+         "P2, P3, P1",
+         "P2, P3 arrived during the slice; P1 goes last"
+        ],
+        [
+         "2-4",
+         "P2",
+         "P3, P1, P4, P2",
+         "P4 arrived at 3"
+        ],
+        [
+         "4-5",
+         "P3",
+         "P1, P4, P2",
+         "P3 finishes in 1 unit"
+        ],
+        [
+         "5-7",
+         "P1",
+         "P4, P2, P1",
+         "P1 has 1 left"
+        ],
+        [
+         "7-9",
+         "P4",
+         "P2, P1, P4",
+         "P4 has 2 left"
+        ],
+        [
+         "9-10",
+         "P2",
+         "P1, P4",
+         "P2 done"
+        ],
+        [
+         "10-11",
+         "P1",
+         "P4",
+         "P1 done"
+        ],
+        [
+         "11-13",
+         "P4",
+         "empty",
+         "P4 done"
+        ]
+       ]
+      },
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          2
+         ],
+         [
+          "P2",
+          2,
+          4
+         ],
+         [
+          "P3",
+          4,
+          5
+         ],
+         [
+          "P1",
+          5,
+          7
+         ],
+         [
+          "P4",
+          7,
+          9
+         ],
+         [
+          "P2",
+          9,
+          10
+         ],
+         [
+          "P1",
+          10,
+          11
+         ],
+         [
+          "P4",
+          11,
+          13
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT",
+        "RT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         5,
+         11,
+         11,
+         6,
+         0
+        ],
+        [
+         "P2",
+         1,
+         3,
+         10,
+         9,
+         6,
+         1
+        ],
+        [
+         "P3",
+         2,
+         1,
+         5,
+         3,
+         2,
+         2
+        ],
+        [
+         "P4",
+         3,
+         4,
+         13,
+         10,
+         6,
+         4
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**8.25**",
+         "**5**",
+         "**1.75**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average TAT = 33/4 = **8.25**; average WT = 20/4 = **5**; average RT = 7/4 = **1.75**."
+     ]
+    },
+    {
+     "type": "example",
+     "title": "quantum vs context-switch overhead",
+     "problem": "CPU-bound processes are always ready. The quantum is q = 4 ms and each context switch costs s = 1 ms. (a) What fraction of CPU time is useful work? (b) With 5 processes, how often does each process get the CPU? (c) Repeat (a) for q = 1 ms.",
+     "solution": "(a) Each cycle is one slice plus one switch: useful fraction = q/(q + s) = 4/5 = **80%**.\n\n(b) One round of 5 processes takes 5 × (4 + 1) = 25 ms, so each process runs once every **25 ms**.\n\n(c) q/(q + s) = 1/2 = **50%**. Halving the overhead share needs a larger quantum, at the cost of slower response."
+    }
+   ]
+  },
+  {
+   "heading": "Highest Response Ratio Next (HRRN)",
+   "blocks": [
+    "**Rule:** when the CPU is free, compute for each ready process the response ratio below and run the one with the highest ratio. **Type:** non-pre-emptive.",
+    {
+     "type": "formula",
+     "latex": "\\mathrm{Response\\ ratio}\\ R = \\frac{W + S}{S} = 1 + \\frac{W}{S}"
+    },
+    "W is the time the process has waited so far and S is its burst. Short jobs get a high ratio quickly, as in SJF, but a long job's ratio keeps growing while it waits, so it eventually runs. HRRN therefore **avoids starvation**.",
+    {
+     "type": "example",
+     "title": "HRRN",
+     "problem": "P1 (arrival 0, burst 4), P2 (1, 3), P3 (3, 5), P4 (5, 2). Find the average WT under HRRN.",
+     "solution": [
+      "P1 runs 0-4 (only process at 0).",
+      "t = 4: P2 ratio = (3 + 3)/3 = 2.0; P3 ratio = (1 + 5)/5 = 1.2. P2 runs 4-7.",
+      "t = 7: P3 ratio = (4 + 5)/5 = 1.8; P4 ratio = (2 + 2)/2 = 2.0. P4 runs 7-9, then P3 runs 9-14.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          4
+         ],
+         [
+          "P2",
+          4,
+          7
+         ],
+         [
+          "P4",
+          7,
+          9
+         ],
+         [
+          "P3",
+          9,
+          14
+         ]
+        ]
+       }
+      },
+      {
+       "type": "table",
+       "header": [
+        "Process",
+        "AT",
+        "BT",
+        "CT",
+        "TAT",
+        "WT"
+       ],
+       "rows": [
+        [
+         "P1",
+         0,
+         4,
+         4,
+         4,
+         0
+        ],
+        [
+         "P2",
+         1,
+         3,
+         7,
+         6,
+         3
+        ],
+        [
+         "P3",
+         3,
+         5,
+         14,
+         11,
+         6
+        ],
+        [
+         "P4",
+         5,
+         2,
+         9,
+         4,
+         2
+        ],
+        [
+         "**Average**",
+         "",
+         "",
+         "",
+         "**6.25**",
+         "**2.75**"
+        ]
+       ],
+       "total_row": true
+      },
+      "Average WT = 11/4 = **2.75**."
+     ]
+    }
+   ]
+  },
+  {
+   "heading": "Multilevel queue and multilevel feedback queue",
+   "blocks": [
+    "**Multilevel queue (MLQ):** the ready queue is split into fixed classes, for example system, interactive and batch. Each class has its own algorithm (say RR for interactive, FCFS for batch), and a process stays in its class for life. Between queues the scheduler uses fixed priority with pre-emption, or time-slicing such as 80% foreground and 20% background. With fixed priority the lower queues can starve.",
+    "**Multilevel feedback queue (MLFQ):** processes move between queues. A new process enters the top queue, which has a small quantum. If it uses its whole quantum it is **demoted** to the next queue; a higher queue always pre-empts a lower one. Long waiters can be **promoted** (ageing). An MLFQ is defined by the number of queues, the algorithm in each, the rules for demotion and promotion, and the entry queue. It favours short and I/O-bound jobs without knowing burst lengths in advance.",
+    {
+     "type": "figure",
+     "kind": "graph",
+     "width": 0.62,
+     "caption": "MLFQ: a process that uses its full quantum drops one level.",
+     "spec": {
+      "rankdir": "TB",
+      "node_shape": "box",
+      "nodes": [
+       {
+        "id": "n",
+        "label": "new process",
+        "shape": "plaintext"
+       },
+       {
+        "id": "q0",
+        "label": "Q0: RR, q = 4",
+        "shape": "box",
+        "fill": "purple"
+       },
+       {
+        "id": "q1",
+        "label": "Q1: RR, q = 8",
+        "shape": "box",
+        "fill": "mid"
+       },
+       {
+        "id": "q2",
+        "label": "Q2: FCFS",
+        "shape": "box",
+        "fill": "gold"
+       }
+      ],
+      "edges": [
+       [
+        "n",
+        "q0"
+       ],
+       [
+        "q0",
+        "q1",
+        "used full quantum"
+       ],
+       [
+        "q1",
+        "q2",
+        "used full quantum"
+       ],
+       {
+        "from": "q2",
+        "to": "q0",
+        "label": "ageing",
+        "style": "dashed",
+        "constraint": false
+       }
+      ]
+     }
+    },
+    {
+     "type": "example",
+     "title": "MLFQ",
+     "problem": "Three queues: Q0 is RR with q = 4, Q1 is RR with q = 8, Q2 is FCFS. P1 (burst 15), P2 (3) and P3 (9) all arrive at 0 and enter Q0. Find each completion time.",
+     "solution": [
+      "**Q0:** P1 runs 0-4 and uses the full quantum (11 left), so it drops to Q1. P2 runs 4-7 and finishes. P3 runs 7-11 (5 left) and drops to Q1.",
+      "**Q1:** P1 runs 11-19 and uses the full quantum (3 left), so it drops to Q2. P3 runs 19-24 and finishes.",
+      "**Q2:** P1 runs 24-27 and finishes.",
+      {
+       "type": "figure",
+       "kind": "gantt",
+       "spec": {
+        "segments": [
+         [
+          "P1",
+          0,
+          4
+         ],
+         [
+          "P2",
+          4,
+          7
+         ],
+         [
+          "P3",
+          7,
+          11
+         ],
+         [
+          "P1",
+          11,
+          19
+         ],
+         [
+          "P3",
+          19,
+          24
+         ],
+         [
+          "P1",
+          24,
+          27
+         ]
+        ]
+       }
+      },
+      "CT: P1 = **27**, P2 = **7**, P3 = **24**. The short job finished in the top queue while the long job sank to FCFS."
+     ]
+    }
+   ]
+  },
+  {
+   "heading": "One problem, every algorithm",
+   "blocks": [
+    "The best way to see the trade-offs is to run every algorithm on the same workload. Smaller priority number = higher priority.",
+    {
+     "type": "table",
+     "header": [
+      "Process",
+      "Arrival",
+      "Burst",
+      "Priority"
+     ],
+     "rows": [
+      [
+       "P1",
+       0,
+       7,
+       3
+      ],
+      [
+       "P2",
+       1,
+       4,
+       1
+      ],
+      [
+       "P3",
+       3,
+       1,
+       4
+      ],
+      [
+       "P4",
+       4,
+       4,
+       2
+      ]
+     ]
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        7
+       ],
+       [
+        "P2",
+        7,
+        11
+       ],
+       [
+        "P3",
+        11,
+        12
+       ],
+       [
+        "P4",
+        12,
+        16
+       ]
+      ]
+     },
+     "title": "FCFS"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        7
+       ],
+       [
+        "P3",
+        7,
+        8
+       ],
+       [
+        "P2",
+        8,
+        12
+       ],
+       [
+        "P4",
+        12,
+        16
+       ]
+      ]
+     },
+     "title": "SJF"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        1
+       ],
+       [
+        "P2",
+        1,
+        3
+       ],
+       [
+        "P3",
+        3,
+        4
+       ],
+       [
+        "P2",
+        4,
+        6
+       ],
+       [
+        "P4",
+        6,
+        10
+       ],
+       [
+        "P1",
+        10,
+        16
+       ]
+      ]
+     },
+     "title": "SRTF"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        7
+       ],
+       [
+        "P2",
+        7,
+        11
+       ],
+       [
+        "P4",
+        11,
+        15
+       ],
+       [
+        "P3",
+        15,
+        16
+       ]
+      ]
+     },
+     "title": "Priority (non-pre-emptive)"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        1
+       ],
+       [
+        "P2",
+        1,
+        5
+       ],
+       [
+        "P4",
+        5,
+        9
+       ],
+       [
+        "P1",
+        9,
+        15
+       ],
+       [
+        "P3",
+        15,
+        16
+       ]
+      ]
+     },
+     "title": "Priority (pre-emptive)"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        3
+       ],
+       [
+        "P2",
+        3,
+        6
+       ],
+       [
+        "P3",
+        6,
+        7
+       ],
+       [
+        "P1",
+        7,
+        10
+       ],
+       [
+        "P4",
+        10,
+        13
+       ],
+       [
+        "P2",
+        13,
+        14
+       ],
+       [
+        "P1",
+        14,
+        15
+       ],
+       [
+        "P4",
+        15,
+        16
+       ]
+      ]
+     },
+     "title": "Round Robin, q = 3"
+    },
+    {
+     "type": "figure",
+     "kind": "gantt",
+     "spec": {
+      "segments": [
+       [
+        "P1",
+        0,
+        7
+       ],
+       [
+        "P3",
+        7,
+        8
+       ],
+       [
+        "P2",
+        8,
+        12
+       ],
+       [
+        "P4",
+        12,
+        16
+       ]
+      ]
+     },
+     "title": "HRRN"
+    },
+    {
+     "type": "table",
+     "header": [
+      "Algorithm",
+      "Avg WT",
+      "Avg TAT",
+      "Avg RT"
+     ],
+     "widths": [
+      200,
+      90,
+      90,
+      90
+     ],
+     "rows": [
+      [
+       "FCFS",
+       "5.5",
+       "9.5",
+       "5.5"
+      ],
+      [
+       "SJF",
+       "4.75",
+       "8.75",
+       "4.75"
+      ],
+      [
+       "SRTF",
+       "3",
+       "7",
+       "0.5"
+      ],
+      [
+       "Priority (non-pre-emptive)",
+       "6.25",
+       "10.25",
+       "6.25"
+      ],
+      [
+       "Priority (pre-emptive)",
+       "5.25",
+       "9.25",
+       "3.25"
+      ],
+      [
+       "Round Robin, q = 3",
+       "7",
+       "11",
+       "2.75"
+      ],
+      [
+       "HRRN",
+       "4.75",
+       "8.75",
+       "4.75"
+      ]
+     ]
+    },
+    {
+     "type": "bullets",
+     "items": [
+      "SRTF wins on all three averages (WT 3, TAT 7, RT 0.5), as theory predicts.",
+      "SJF and HRRN give the same schedule here: at t = 7, P3 is both the shortest job and the one with the highest ratio (5.0).",
+      "Non-pre-emptive priority has the worst WT among the non-RR policies because the 1-unit job P3 has the lowest priority and waits until the end.",
+      "Round Robin has the highest average TAT (11), but it never makes anyone wait long for a first turn."
+     ]
+    }
+   ],
+   "no_example": true
+  }
+ ],
+ "revision_card": [
+  "TAT = CT − AT, WT = TAT − BT, RT = first run − AT",
+  "Non-pre-emptive: FCFS, SJF, HRRN. Pre-emptive: SRTF, RR. Priority can be either",
+  "SJF is optimal for jobs arriving together; SRTF is optimal for any arrival pattern",
+  "Exponential average: $\\tau_{n+1} = \\alpha t_n + (1-\\alpha)\\tau_n$",
+  "RR: large q acts like FCFS; useful CPU share = q/(q + s)",
+  "HRRN ratio = (W + S)/S; it prevents starvation",
+  "Starvation: SJF, SRTF, Priority, MLQ. Cure: ageing. Convoy effect: FCFS",
+  "MLFQ: demote on a full quantum, promote by ageing"
+ ],
+ "pyqs": [
+  {
+   "source": "CS-GATE-2016",
+   "qtype": "MCQ",
+   "marks": 1,
+   "question": "Consider an arbitrary set of CPU-bound processes with unequal CPU burst lengths submitted at the same time to a computer system. Which one of the following process scheduling algorithms would minimize the average waiting time in the ready queue?",
+   "options": [
+    "Shortest remaining time first",
+    "Round-robin with time quantum less than the shortest CPU burst",
+    "Uniform random",
+    "Highest priority first with priority proportional to CPU burst length"
+   ],
+   "answer": "A",
+   "solution": "Shortest-job scheduling is optimal for average waiting time; SRTF is its pre-emptive form, and with all jobs arriving together it behaves like SJF."
+  },
+  {
+   "source": "CS-GATE-2012",
+   "qtype": "MCQ",
+   "marks": 2,
+   "question": "Consider the 3 processes, P1, P2 and P3 with (arrival time, time units required) = P1 (0, 5), P2 (1, 7), P3 (3, 4). The completion order of the 3 processes under the policies FCFS and RR2 (round robin scheduling with CPU quantum of 2 time units) are",
+   "options": [
+    "FCFS: P1, P2, P3  RR2: P1, P2, P3",
+    "FCFS: P1, P3, P2  RR2: P1, P3, P2",
+    "FCFS: P1, P2, P3  RR2: P1, P3, P2",
+    "FCFS: P1, P3, P2  RR2: P1, P2, P3"
+   ],
+   "answer": "C",
+   "solution": "FCFS follows arrival order P1, P2, P3. RR2: P1 0-2, P2 2-4, P1 4-6, P3 6-8, P2 8-10, P1 10-11 (done), P3 11-13 (done), P2 13-16 (done): order P1, P3, P2."
+  },
+  {
+   "source": "CS-GATE-2014",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Consider processes (arrival time, execution time in ms): A (0, 6), B (3, 2), C (5, 4), D (7, 6), E (10, 3). Using the shortest remaining time first scheduling algorithm, the average turn around time (in msec) is ______.",
+   "answer": "7.2",
+   "solution": "A 0-3, B 3-5, A 5-8, C 8-12, E 12-15, D 15-21. TAT = 8, 2, 7, 14, 5; average 36/5 = 7.2.",
+   "solution_figure": {
+    "kind": "gantt",
+    "spec": {
+     "segments": [
+      [
+       "A",
+       0,
+       3
+      ],
+      [
+       "B",
+       3,
+       5
+      ],
+      [
+       "A",
+       5,
+       8
+      ],
+      [
+       "C",
+       8,
+       12
+      ],
+      [
+       "E",
+       12,
+       15
+      ],
+      [
+       "D",
+       15,
+       21
+      ]
+     ]
+    }
+   },
+   "answer_range": "7.2 to 7.2"
+  },
+  {
+   "source": "CS-GATE-2016",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Consider the following processes, with the arrival time and the length of the CPU burst given in milliseconds: P1 (0, 10), P2 (3, 6), P3 (7, 1), P4 (8, 3). The scheduling algorithm used is preemptive shortest remaining-time first. The average turn around time of these processes is ______ milliseconds.",
+   "answer": "8.25",
+   "solution": "P1 0-3, P2 3-7, P3 7-8, P2 8-10, P4 10-13, P1 13-20. TAT = 20, 7, 1, 5; average 33/4 = 8.25.",
+   "answer_range": "8.25 to 8.25"
+  },
+  {
+   "source": "CS-GATE-2026",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Type-A processes (CPU burst 6 s) arrive at t = 10, 20, 30, 40, 50 and type-C processes (burst 8 s) arrive at t = 11, 22, 33, 44, 55. Scheduling is FCFS; the first A starts at t = 10. Average waiting time (s) of the 10 processes = ______ (one decimal place).",
+   "answer": "9.5",
+   "solution": "Order A1, C1, A2, C2, A3, C3, A4, C4, A5, C5 with waits 0, 5, 4, 8, 8, 11, 12, 14, 16, 17. Sum 95, average 9.5.",
+   "answer_range": "9.5 to 9.5"
+  }
+ ],
+ "practice": [
+  {
+   "level": "Easy",
+   "qtype": "MCQ",
+   "marks": 1,
+   "question": "Which one of the following CPU scheduling algorithms can cause starvation?",
+   "options": [
+    "FCFS",
+    "Round Robin",
+    "Non-pre-emptive SJF",
+    "None of these"
+   ],
+   "answer": "C",
+   "solution": "A long job may wait forever if short jobs keep arriving.",
+   "mirrors": "CS-GATE-2016 Q (algorithm property)"
+  },
+  {
+   "level": "Easy",
+   "qtype": "NAT",
+   "marks": 1,
+   "question": "P1, P2 and P3 arrive at time 0 in that order with CPU bursts of 6 ms, 3 ms and 8 ms. Under FCFS scheduling, the average waiting time (in ms) is ______.",
+   "answer": "5",
+   "solution": "Waits 0, 6, 9; average 15/3 = 5.",
+   "answer_range": "5 to 5",
+   "mirrors": "FCFS average WT"
+  },
+  {
+   "level": "Medium",
+   "qtype": "NAT",
+   "marks": 1,
+   "question": "For the same three processes (bursts 6 ms, 3 ms and 8 ms, all arriving at time 0), the average waiting time (in ms) under SJF scheduling is ______.",
+   "answer": "4",
+   "solution": "Order P2, P1, P3: waits 0, 3, 9; average 4.",
+   "answer_range": "4 to 4",
+   "mirrors": "SJF average WT"
+  },
+  {
+   "level": "Medium",
+   "qtype": "MCQ",
+   "marks": 1,
+   "question": "If the Round Robin time quantum is larger than every CPU burst, Round Robin behaves like",
+   "options": [
+    "SJF",
+    "FCFS",
+    "SRTF",
+    "Priority"
+   ],
+   "answer": "B",
+   "solution": "Every process finishes within its first quantum, in arrival order.",
+   "mirrors": "RR limiting case"
+  },
+  {
+   "level": "Medium",
+   "qtype": "NAT",
+   "marks": 1,
+   "question": "A scheduler predicts CPU bursts by exponential averaging with α = 0.5 and an initial prediction of 12 ms. The first two actual bursts are 8 ms and 6 ms. The predicted length (in ms) of the third burst is ______.",
+   "answer": "8",
+   "solution": "$\\tau_2$ = 0.5(8) + 0.5(12) = 10; $\\tau_3$ = 0.5(6) + 0.5(10) = 8.",
+   "answer_range": "8 to 8",
+   "mirrors": "exponential averaging"
+  },
+  {
+   "level": "Medium",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Processes P1 (arrival 0, burst 4), P2 (arrival 2, burst 5) and P3 (arrival 4, burst 1), all times in ms, are scheduled with non-pre-emptive SJF. The average turnaround time (in ms) is ______ (rounded off to two decimal places).",
+   "answer": "4.33",
+   "solution": "P1 0-4; at 4 both P2 and P3 are ready, P3 is shorter: P3 4-5, P2 5-10. TAT 4, 8, 1; average 13/3 = 4.33.",
+   "answer_range": "4.32 to 4.34",
+   "mirrors": "SJF with arrivals (TAT)"
+  },
+  {
+   "level": "Medium",
+   "qtype": "NAT",
+   "marks": 1,
+   "question": "In a Round Robin system the time quantum is 5 ms and every context switch takes 1 ms. If CPU-bound processes are always ready, the percentage of CPU time spent on useful work is ______ (rounded off to two decimal places).",
+   "answer": "83.33",
+   "solution": "Useful share = q/(q + s) = 5/6 = 83.33%.",
+   "answer_range": "83.32 to 83.34",
+   "mirrors": "RR overhead fraction"
+  },
+  {
+   "level": "Hard",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Processes P1 (arrival 0, burst 6), P2 (2, 4), P3 (3, 2) and P4 (4, 3), all times in ms, are scheduled with Highest Response Ratio Next. The average waiting time (in ms) is ______ (rounded off to two decimal places).",
+   "answer": "4.25",
+   "solution": "P1 0-6. t = 6: ratios P2 (4 + 4)/4 = 2, P3 (3 + 2)/2 = 2.5, P4 (2 + 3)/3 = 1.67, so P3 runs 6-8. t = 8: P2 (6 + 4)/4 = 2.5, P4 (4 + 3)/3 = 2.33, so P2 runs 8-12, P4 12-15. WT = 0, 6, 3, 8; average 17/4 = 4.25.",
+   "solution_figure": {
+    "kind": "gantt",
+    "spec": {
+     "segments": [
+      [
+       "P1",
+       0,
+       6
+      ],
+      [
+       "P3",
+       6,
+       8
+      ],
+      [
+       "P2",
+       8,
+       12
+      ],
+      [
+       "P4",
+       12,
+       15
+      ]
+     ]
+    }
+   },
+   "answer_range": "4.24 to 4.26",
+   "mirrors": "HRRN schedule (WT)"
+  },
+  {
+   "level": "Hard",
+   "qtype": "NAT",
+   "marks": 2,
+   "question": "Processes P1 (arrival 0, burst 8), P2 (1, 4), P3 (2, 9) and P4 (3, 5), all times in ms, are scheduled with pre-emptive shortest remaining time first. The average turnaround time (in ms) is ______.",
+   "answer": "13",
+   "solution": "CT: P1 17, P2 5, P3 26, P4 10. TAT 17, 4, 24, 7; average 52/4 = 13.",
+   "answer_range": "13 to 13",
+   "mirrors": "SRTF TAT (CS-GATE-2014/2016 type)"
+  },
+  {
+   "level": "Hard",
+   "qtype": "MSQ",
+   "marks": 2,
+   "question": "Which of the following statements is/are CORRECT?",
+   "options": [
+    "SRTF minimises the average waiting time for a given set of arrivals, ignoring context-switch overhead",
+    "Making the Round Robin quantum very small increases the number of context switches",
+    "FCFS can suffer from the convoy effect",
+    "Priority scheduling cannot be pre-emptive"
+   ],
+   "answer": "A, B, C",
+   "solution": "Priority scheduling can be pre-emptive, so D is false; the rest are standard results.",
+   "mirrors": "statement MSQ"
+  }
+ ],
+ "sample_paper": {
+  "title": "Sample paper (timed)",
+  "duration": "12 min",
+  "marks": 8,
+  "questions": [
+   {
+    "qtype": "MCQ",
+    "marks": 1,
+    "question": "The convoy effect is most associated with",
+    "options": [
+     "FCFS",
+     "Round Robin",
+     "SRTF",
+     "Multilevel feedback queue"
+    ],
+    "answer": "A",
+    "solution": "Short jobs pile up behind one long job in FCFS."
+   },
+   {
+    "qtype": "MCQ",
+    "marks": 1,
+    "question": "Which algorithm needs the length of the next CPU burst in advance?",
+    "options": [
+     "FCFS",
+     "SJF",
+     "Round Robin",
+     "Priority with ageing"
+    ],
+    "answer": "B",
+    "solution": "SJF chooses by burst length, which must be known or estimated."
+   },
+   {
+    "qtype": "NAT",
+    "marks": 2,
+    "question": "Processes P1 (arrival 0, burst 7), P2 (1, 4) and P3 (2, 2), all times in ms, are scheduled Round Robin with a time quantum of 3 ms. The average turnaround time (in ms) is ______.",
+    "answer": "10",
+    "solution": "P1 0-3, P2 3-6, P3 6-8, P1 8-11, P2 11-12, P1 12-13. TAT 13, 11, 6; average 10.",
+    "answer_range": "10 to 10"
+   },
+   {
+    "qtype": "MSQ",
+    "marks": 2,
+    "question": "Which of the following CPU scheduling algorithms is/are possible in a pre-emptive form?",
+    "options": [
+     "SJF (as SRTF)",
+     "Priority",
+     "Round Robin",
+     "FCFS"
+    ],
+    "answer": "A, B, C",
+    "solution": "FCFS is inherently non-pre-emptive."
+   },
+   {
+    "qtype": "NAT",
+    "marks": 2,
+    "question": "Processes P1 (arrival 0, burst 3), P2 (1, 5) and P3 (2, 2), all times in ms, are scheduled FCFS. The average waiting time (in ms) is ______ (rounded off to two decimal places).",
+    "answer": "2.67",
+    "solution": "CT 3, 8, 10; waits 0, 2, 6; average 8/3 = 2.67.",
+    "answer_range": "2.66 to 2.68"
+   }
+  ]
+ },
+ "subtitle": "Topic guide: concept notes, worked examples, previous-year GATE questions, practice and sample paper",
+ "traps": [
+  "**Idle CPU:** if nothing is ready, the CPU idles. Completion times, utilisation and throughput must include the gap.",
+  "**Ties:** equal bursts, priorities or ratios are broken by earlier arrival unless the question says otherwise.",
+  "**RR queue order:** a process arriving at the instant another is pre-empted joins the queue before the pre-empted process.",
+  "**Priority direction:** confirm whether a smaller or a larger number means higher priority.",
+  "**Pre-emptive waiting time:** use WT = CT − AT − BT, not \"start time − arrival time\"; a process can wait in several pieces.",
+  "**Context switches:** decide whether the first dispatch and the final exit are counted before you count.",
+  "**Processes with I/O:** the CPU can run another process while one is doing I/O; subtract I/O time as well when finding WT.",
+  "**NAT rounding:** keep exact fractions and round only the final answer to the places asked."
+ ]
+}

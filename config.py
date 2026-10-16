@@ -1,0 +1,34 @@
+"""Settings: providers, prices, limits and secrets. The only file to edit to change a model or a limit."""
+import os
+
+# One best-value model per provider. price = (USD per 1M input tokens, USD per 1M output tokens).
+PROVIDERS = {
+    'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0)},
+    'OpenAI': {'model': 'gpt-6.1-sol', 'key': 'OPENAI_API_KEY', 'price': (2.0, 10.0)},
+    'Gemini': {'model': 'gemini-4-argon', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (4.0, 20.0)},  # Vertex AI. $2/$10 until 2026-11-30, then $4/$20 (confirm on the Vertex pricing page)
+}
+EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # price per 1M tokens
+
+COST_CAP = 5.0            # USD per run; the run stops cleanly when reached
+MAX_TOPICS = 20           # per run
+MAX_URLS = 10             # PYQ source URLs per run
+MAX_BOOK_MB, MAX_PAGES = 100, 1500
+WORKERS = 2               # runs processed at the same time
+SCOPE_TOKEN_BUDGET = 40_000   # scope text up to this size is sent whole, in page order
+TOPIC_TOKEN_BUDGET = 8_000    # per-topic retrieval budget for larger scopes
+STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted
+
+
+def secret(name):
+    """Environment variable first (tests, local runs), then Streamlit secrets."""
+    if os.environ.get(name): return os.environ[name]
+    try:
+        import streamlit as st
+        return st.secrets.get(name)
+    except Exception:
+        return None
+
+
+def cost(provider, tokens_in, tokens_out):
+    p_in, p_out = PROVIDERS[provider]['price']
+    return (tokens_in * p_in + tokens_out * p_out) / 1e6

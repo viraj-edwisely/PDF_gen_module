@@ -1,0 +1,17 @@
+streamlit>=1.50
+psycopg[binary]>=3.2
+psycopg-pool>=3.2
+supabase>=2.9
+anthropic>=0.85
+openai>=2.0
+google-genai>=1.0
+pymupdf>=1.24
+reportlab>=4.0
+matplotlib>=3.8
+numpy
+pillow
+schemdraw>=0.19
+openpyxl
+pandas
+requests
+beautifulsoup4
