@@ -1,64 +1,49 @@
-# Topic content JSON (input to scripts/build_topic_pdf.py)
+# Topic content JSON
 
-Two complete, rendered examples - copy their structure:
-- `example_topic.json` - CS · Operating System · CPU Scheduling Algorithms (the reference depth:
-  11 sections, 11 worked examples, 18 figures, traps, comparison section, 5 PYQs, 10 practice, sample paper).
-- `example_topic_figures_ce.json` - CE · SFD and BMD (beam diagrams, SFD/BMD plots, a figure inside a
-  practice question). It has no PYQs only because no PYQ bank was attached when it was made.
+The app assembles the PDF from the parts each task asks for. Section order in the PDF: cover and "What you will learn" →
+Contents → Concept notes → Common GATE traps → Revision card → Previous-year GATE questions → Practice questions →
+Sample paper → Answer key and solutions.
 
-IDs and `exam` are used only for file names / INDEX.xlsx; they are never printed in the PDF.
-GATE-level rules for every field: `gate_level_standard.md`. Check with `scripts/check_gate_level.py`.
+## Notes: a list of sections
+{"heading": "short section title (numbered 2.1, 2.2 ... automatically)", "blocks": [ BLOCK, ... ]}
+Add "no_example": true only for a pure-definition section that cannot have a worked example.
 
-```json
-{
-  "paper": "CS", "exam": "GATE 2027", "subject": "Operating System",
-  "module_id": "CS-M21", "module_name": "Operating System I",
-  "topic_id": "CS-S10-T05", "topic_name": "CPU Scheduling Algorithms",
-  "syllabus_line": "exact line from the official GATE syllabus",
-  "subtitle": "optional cover subtitle",
-  "contents": true,                     // clickable contents page after the cover (default true)
-  "objectives": ["3-5 outcomes, verb first"],
-  "prerequisites": ["topic name only"],
-  "notes": [ {"heading": "Section title (numbered automatically 2.1, 2.2 ...)", "blocks": [ BLOCK, ... ],
-              "no_example": false} ],
-  "traps": ["5-10 one-line GATE traps, **bold lead-in:** explanation"],
-  "revision_card": ["5-8 one-line key points / formulas"],
-  "pyqs": [ QUESTION, ... ],            // official only, source in capitals: CS-GATE-2019
-  "practice": [ QUESTION, ... ],        // original, 10-12, level Easy -> Medium -> Hard
-  "sample_paper": {"title": "Sample paper (timed)", "duration": "12 min", "marks": 8, "questions": [ QUESTION, ... ]}
-}
-```
-Section order in the PDF: cover + What you will learn → Contents (clickable, page 2) → Concept notes → Common GATE traps → Revision card →
-Previous-year GATE questions → Practice questions → Sample paper → Answer key and solutions.
-
-## BLOCK types
+## BLOCK types (use exactly these field names)
 A bare string in a blocks list is a `para`.
 
 | type | fields | renders as |
 |---|---|---|
 | `para` | text | paragraph |
 | `subhead` | text | bold run-in heading ("Order P1, P2, P3:", "(a) Non-pre-emptive") |
-| `bullets` / `numbered` | items[] | list |
-| `formula` | latex (no $) | centred display maths |
-| `table` | header[], rows[][], widths[] (pt, optional), total_row (bool: last row bold, shaded - Average/Total) | purple-header striped table |
-| `example` | title, problem, solution - each a **string** (blank line = new paragraph) **or a list of BLOCKs** (tables, figures, subheads, formulas) | lavender worked-example box that can run across pages |
-| `trap` | text, title (default "Common GATE trap") | titled lavender box - a mistake GATE questions are built to catch |
-| `note` | text, optional title, optional blocks | lavender box with purple bar (GATE habits, conventions) |
-| `callout` | text | purple box, white text (the one rule to remember) |
-| `code` | text | monospace box (C code, pseudo-code, SQL) |
-| `figure` | kind, spec, title, caption, width (0-1) | brand-styled figure drawn by figures.py - see `figure_catalogue.md` |
-| `image` | path, title, caption, width | a PNG (PYQ figure crop, custom matplotlib figure) |
-| `spacer` / `pagebreak` | height | layout control, rarely needed |
+| `bullets` / `numbered` | items: [string, ...] | list |
+| `formula` | latex (no $) | centred display maths, one equation |
+| `table` | header: [string, ...], rows: [[string, ...], ...], total_row (bool, optional: last row bold) | purple-header table |
+| `example` | title, problem, solution, check | worked-example box. problem and solution are each a string (a blank line starts a new paragraph) or a list of BLOCKs (tables, figures, formulas inside) |
+| `trap` | text, title (optional, default "Common GATE trap") | box: a mistake GATE questions are built to catch |
+| `note` | text, title (optional), blocks (optional) | box for GATE habits and conventions |
+| `callout` | text | purple box: the one rule to remember |
+| `code` | text | monospace box (C code, pseudo-code, SQL, assembly). Text is shown exactly as typed, no maths |
+| `figure` | kind, spec, title (optional), caption (optional), width (0 to 1, optional) | a figure drawn by the app; see FIGURES for every kind and its exact spec |
+
+The example "title" is the topic of the example only ("Relative branch target"), without the words "Worked example".
+There are no image blocks: every picture is a `figure` the app draws.
+
+## "check": how the app verifies numbers
+A worked example with a numeric result, and every NAT question, carry a "check":
+- example: "check": {"expr": "0x3000 - 0x1F4", "answer": "0x2E0C"}   (answer = the final result as written in the solution)
+- NAT question: "check": "0.40*ceil(1.05/0.40)"   (must give the "answer", within "answer_range")
+- MCQ whose correct option is a number: "check": "4500 - 200"   (must give the number in the correct option)
+"expr" is plain arithmetic on the numbers of the problem: + - * / // % **, parentheses, hex literals like 0x1F4, and only these functions:
+ceil, floor, round, sqrt, log, log2, log10, exp, sin, cos, tan, abs, min, max, int, float. No variables, no units, no text.
+Leave "check" out for questions whose answer is not a number.
 
 ## QUESTION fields
-`question`, `qtype` (MCQ/MSQ/NAT), `marks` (1/2), `options` (exactly 4 strings; omit for NAT),
-`answer` (letter(s) "B" / "A, C", or the number for NAT), `answer_range` (NAT: "7.19 to 7.21"),
-`solution` (string or BLOCK list, shown in the answer key), `source` (PYQs only, e.g. `CS-GATE-2016`),
-`level` (practice only: Easy/Medium/Hard), `figure` ({kind, spec, width} drawn under the stem) or
-`image` (path, e.g. PYQ crop), `solution_figure` ({kind, spec}) or `solution_image`,
-`mirrors` (internal: the PYQ archetype an original question is calibrated to; never printed).
+`question`, `qtype` (MCQ/MSQ/NAT), `marks` (1 or 2), `options` (exactly 4 strings, without "(A)" prefixes; omit for NAT),
+`answer` (letter(s) "B" / "A, C", or the number for NAT), `answer_range` (NAT, e.g. "7.19 to 7.21"),
+`solution` (string or BLOCK list, shown in the answer key), `check` (see above), `level` (practice only: Easy/Medium/Hard),
+`figure` (a figure object {kind, spec, width} drawn under the question; the question then says "shown in the figure"),
+`solution_figure` (a figure object shown in the answer key), `mirrors` (internal: the GATE archetype it is calibrated to; never printed).
+PYQs only: `source` like CS-GATE-2019.
 
 ## Text markup
-`**bold**`, `*italic*`, inline maths `$...$` (matplotlib mathtext: `\frac{a}{b}`, `\Theta(n\log n)`,
-`x^{2}`, `\sum_{i=1}^{n}`, `\mathrm{text}`), `\n` line break, `\$` literal dollar.
-Mathtext does not support `\begin{...}` environments - use a `table` block for matrices/truth tables.
+`**bold**`, `*italic*`, inline maths `$...$` (see MATHS), a blank line starts a new paragraph, `\$` is a literal dollar.

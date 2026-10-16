@@ -1,11 +1,11 @@
 """Settings: providers, prices, limits and secrets. The only file to edit to change a model or a limit."""
 import os
 
-# One model per provider (OpenAI and Gemini are on the cheaper tier while we compare quality). price = (USD per 1M input tokens, USD per 1M output tokens).
+# One model per provider: Claude Sonnet is the reference, OpenAI and Gemini are mid-price models. price = (USD per 1M input tokens, USD per 1M output tokens).
 PROVIDERS = {
     'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0)},
-    'OpenAI': {'model': 'gpt-4.1-mini', 'key': 'OPENAI_API_KEY', 'price': (0.40, 1.60)},
-    'Gemini': {'model': 'gemini-2.5-flash', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.30, 2.50)},  # Vertex AI (confirm the price and that 2.5 is not retired on Vertex)
+    'OpenAI': {'model': 'gpt-5.4-mini', 'key': 'OPENAI_API_KEY', 'price': (0.75, 4.50)},
+    'Gemini': {'model': 'gemini-3-flash-preview', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.50, 3.0)},  # Vertex AI. Prices from trackers: confirm them and the model ID in your project
 }
 EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # price per 1M tokens
 
@@ -13,8 +13,10 @@ COST_CAP = 5.0            # USD per run; the run stops cleanly when reached
 MAX_TOPICS = 20           # per run
 MAX_URLS = 10             # PYQ source URLs per run
 MAX_BOOK_MB, MAX_PAGES = 100, 1500
-WORKERS = 2               # runs processed at the same time
+WORKERS = 4               # PDFs (and book uploads) processed at the same time, across all runs
+TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time
 PARALLEL = 4              # model calls running at the same time inside one PDF
+VERIFY_PROVIDER = 'Claude'    # the second model that re-checks GATE answer keys (falls back to the run's writer without its key)
 SCOPE_TOKEN_BUDGET = 40_000   # scope text up to this size is sent whole, in page order
 TOPIC_TOKEN_BUDGET = 8_000    # per-topic retrieval budget for larger scopes
 STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted

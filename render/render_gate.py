@@ -12,26 +12,29 @@ def fig_width(f):
 
 
 def q_figure(q, key):
-    if q.get(key + '_figure'): return figure_path(q[key + '_figure'])
-    return q.get(key + '_image') if key != 'question' else (q.get('image') or (figure_path(q['figure']) if q.get('figure') else None))
+    """PNG of a question's figure (key 'question') or of its answer-key figure (key 'solution'), or None."""
+    f = q.get('figure') if key == 'question' else q.get('solution_figure')
+    if not (isinstance(f, dict) and f.get('kind')): return None
+    try: return figure_path(f)
+    except Exception as e: warn(f'a question figure could not be drawn and was left out ({type(e).__name__})'); return None
 
 
 def question(q, n, show_tag=True):
     head = []
     if show_tag:
-        bits = [q.get('source'), q.get('level'), q.get('qtype'), f"{q['marks']} mark{'s' if q.get('marks', 1) != 1 else ''}" if q.get('marks') else None]
+        bits = [q.get('source'), q.get('level'), q.get('qtype'), f"{q['marks']} mark{'s' if q['marks'] != 1 else ''}" if q.get('marks') else None]
         head.append(tag(' · '.join(b for b in bits if b)))
-    body = [Paragraph(f'<font name="Head" color="#4D2A87">Q{n}.</font> ' + rich(q['question']), S['body'])]
+    body = [Paragraph(f'<font name="Head" color="#4D2A87">Q{n}.</font> ' + rich(q.get('question', '')), S['body'])]
     qi = q_figure(q, 'question')
-    if qi and os.path.exists(qi): body.append(image(qi, maxh=95 * mm, width=fig_width(q.get('figure'))))
+    if qi: body.append(image(qi, maxh=95 * mm, width=fig_width(q.get('figure'))))
     if q.get('options'):
-        opts = [Paragraph(f'<font name="HeadM">({"ABCD"[k]})</font> ' + rich(o), S['cell']) for k, o in enumerate(q['options'])]
-        short = all(len(o) < 38 for o in q['options'])
+        opts = [Paragraph(f'<font name="HeadM">({"ABCD"[k]})</font> ' + rich(str(o)), S['cell']) for k, o in enumerate(q['options'][:4])]
+        short = all(len(str(o)) < 38 for o in q['options'])
         rows = [opts[0:2], opts[2:4]] if short and len(opts) == 4 else [[o] for o in opts]
         t = Table(rows, colWidths=[(W - 2 * M - 14) / len(rows[0])] * len(rows[0])); t.setStyle(TableStyle([
             ('LEFTPADDING', (0, 0), (-1, -1), 14), ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 2)]))
         body.append(t)
-    elif q.get('qtype', '').upper() == 'NAT':
+    elif str(q.get('qtype', '')).upper() == 'NAT':
         body.append(P('Answer: ________ (numerical value)', 'small'))
     return KeepTogether(head + body + [Spacer(1, 8)])
 
@@ -43,7 +46,7 @@ def answer_line(q, label):
         ans = f"{ans} (accepted range {q['answer_range']})"
     return [Paragraph(f'<font name="Head" color="#4D2A87">{label}</font>  <b>Answer: {html.escape(str(ans))}</b>'
                       + (f'  <font color="#6B6480">({html.escape(q["source"])})</font>' if q.get('source') else ''), S['body'])] + \
-           ([P(x) for x in sol.split('\n\n')] if isinstance(sol, str) and sol else blocks(sol) if sol else []) + \
+           ([P(x) for x in sol.split('\n\n')] if isinstance(sol, str) and sol else blocks(sol) if isinstance(sol, list) else []) + \
            ([image(q_figure(q, 'solution'), width=fig_width(q.get('solution_figure')))] if q_figure(q, 'solution') else []) + [Spacer(1, 4)]
 
 
@@ -105,7 +108,7 @@ def main():
             for k in ('problem', 'solution', 'blocks'):
                 if isinstance(b.get(k), list): yield from walk(b[k])
     allb = [b for s_ in c.get('notes', []) for b in walk(s_.get('blocks', []))]
-    n_ex = sum(b.get('type') == 'example' for b in allb); n_fig = sum(b.get('type') in ('figure', 'image') for b in allb)
+    n_ex = sum(b.get('type') == 'example' for b in allb); n_fig = sum(b.get('type') == 'figure' for b in allb)
     parts = [f"Concept notes on {len(c.get('notes', []))} ideas" + (f" with {n_ex} worked examples" if n_ex else '') +
              (f" and {n_fig} figures" if n_fig else '')]
     if c.get('traps'): parts.append('common GATE traps')
@@ -131,7 +134,7 @@ def main():
     notes_no = sec
     for j, s_ in enumerate(c.get('notes', []), 1):
         num = f'{notes_no}.{j} ' if c.get('number_notes', True) else ''
-        story += [CondPageBreak(32 * mm), mark(Paragraph(num + rich(s_['heading']), S['h2']), 1, num + s_['heading'])] + blocks(s_.get('blocks', []))
+        story += [CondPageBreak(32 * mm), mark(Paragraph(num + rich(s_.get('heading', '')), S['h2']), 1, num + s_.get('heading', ''))] + blocks(s_.get('blocks', []))
     if c.get('traps'):
         story += h1('Common GATE traps') + blocks([{'type': 'bullets', 'items': c['traps']}])
     if c.get('revision_card'):
@@ -140,11 +143,11 @@ def main():
     if c.get('pyqs'):
         story += h1('Previous-year GATE questions') + [P(c.get('pyq_note', 'Official GATE questions on this topic, tagged by paper and year. '
                                                                      'Answers and solutions are at the end of this PDF.'), 'small')]
-        for k, q in enumerate(c['pyqs'], 1): story.append(question(q, k))
+        for k, q in enumerate(c['pyqs'], 1): story += safely(f'Previous-year question {k}', lambda q=q, k=k: [question(q, k)])
     if c.get('practice'):
         story += h1('Practice questions') + [P('Original GATE-level questions, graded easy → hard (Easy ≈ GATE 1-mark, Hard ≈ GATE 2-mark). '
                                                'Clear 70% before moving on; answers and solutions at the end.', 'small')]
-        for k, q in enumerate(c['practice'], 1): story.append(question(q, k))
+        for k, q in enumerate(c['practice'], 1): story += safely(f'Practice question {k}', lambda q=q, k=k: [question(q, k)])
     sp = c.get('sample_paper')
     if sp and sp.get('questions'):
         story += [PageBreak()] + h1(sp.get('title', 'Sample paper'))
@@ -152,16 +155,16 @@ def main():
                                [[len(sp['questions']), sp.get('marks', ''), sp.get('duration', ''),
                                  sp.get('marking', 'GATE marking: wrong MCQ −1/3 (1-mark) or −2/3 (2-mark); no negative marking for MSQ and NAT; MSQ has no partial credit')]],
                                [24 * mm, 20 * mm, 22 * mm, W - 2 * M - 66 * mm]), Spacer(1, 8)]
-        for k, q in enumerate(sp['questions'], 1): story.append(question(q, k))
+        for k, q in enumerate(sp['questions'], 1): story += safely(f'Sample-paper question {k}', lambda q=q, k=k: [question(q, k)])
     story += [PageBreak()] + h1('Answer key and solutions')
     for title, key, lab in (('Previous-year GATE questions', 'pyqs', 'PYQ'), ('Practice questions', 'practice', 'P'),
                             ('Sample paper', None, 'S')):
         qs = c.get(key, []) if key else (sp or {}).get('questions', [])
         if not qs: continue
         story.append(mark(Paragraph(title, S['h2']), 1, title))
-        for k, q in enumerate(qs, 1): story += answer_line(q, f'{lab}{k}.')
+        for k, q in enumerate(qs, 1): story += safely(f'The answer to {lab}{k}', answer_line, q, f'{lab}{k}.')
     doc.multiBuild(story)   # two passes: the second fills in contents page numbers
-    print('written', out)
+    finish(out)
 
 
 if __name__ == '__main__':

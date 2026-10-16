@@ -1,0 +1,7 @@
+Maths is drawn by matplotlib's mathtext, which understands only part of LaTeX. Anything else is printed as raw text, so use only this:
+- Inline maths between single dollars in any text field: `$t_k = k\Delta$`. Every `$` needs its closing `$` on the same line. A literal dollar sign is `\$`.
+- Display maths in a "formula" block: {"type": "formula", "latex": "EA = PC + d"} (no dollars inside "latex"). One equation per block.
+- Allowed: `^{...}` `_{...}` `\frac{a}{b}` `\sqrt{x}` `\sqrt[3]{x}` `\times` `\cdot` `\div` `\pm` `\leq` `\geq` `\neq` `\approx` `\equiv` `\infty` `\rightarrow` `\Rightarrow` `\leftrightarrow` `\in` `\subseteq` `\cup` `\cap` `\wedge` `\vee` `\neg` `\oplus` `\sum_{i=1}^{n}` `\prod` `\int_{a}^{b}` `\log` `\ln` `\sin` `\cos` `\lim` `\max` `\min` `\lceil x \rceil` `\lfloor x \rfloor` `\left( ... \right)` `\overline{x}` `\hat{x}` `\vec{x}` `\mathrm{text}` `\mathbf{x}` Greek letters (`\alpha` ... `\Omega`).
+- Never use: `\begin{...}` / `\end{...}` (cases, matrix, align, array), `&`, `\\` (line breaks), `\text{}` (write `\mathrm{}`), `\operatorname`, `\dfrac`, `\boxed`, `\cancel`, `\underbrace`, `\xrightarrow`.
+- A piecewise rule, a matrix, a truth table or several aligned lines is a "table" block or several "formula" blocks, never one LaTeX environment.
+- Plain numbers, code, register names and hexadecimal values are plain text, not maths: write 2E0C (hex) or 2E0CH, not $2E0C_{H}$. Keep maths for real formulas.

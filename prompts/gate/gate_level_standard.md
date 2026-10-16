@@ -1,8 +1,8 @@
 # GATE-level standard
 
-Read this before writing any topic. Every PDF is preparation for **GATE**, not for a university
-semester exam, a school board or a placement test. `scripts/check_gate_level.py` enforces the
-mechanical parts; the judgement parts are yours.
+Every PDF is preparation for **GATE**, not for a university semester exam, a school board or a
+placement test. The app checks the mechanical parts (question format, marks, answer checks); the
+judgement parts are yours.
 
 ## Contents
 1. The exam the content is calibrated to
@@ -36,9 +36,8 @@ Consequences for the content:
   conventions otherwise, stated explicitly when GATE papers have used more than one).
 
 ## 2. Notes: what GATE-level depth means
-Start from the topic's previous-year questions (PYQ shortlist from `find_pyqs.py`, and the
-framework's years-asked/priority columns if the planner workbook has them). List the **question
-archetypes** GATE has used for this topic (e.g. "SRTF average TAT with arrivals", "max BM under a
+Start from the topic's previous-year questions (those given in the task, and those you know GATE
+has asked). List the **question archetypes** GATE has used for this topic (e.g. "SRTF average TAT with arrivals", "max BM under a
 partial UDL", "eigenvalues of a triangular matrix"). The notes must equip the student for every
 archetype, plus the obvious neighbours GATE has not yet asked.
 
@@ -104,8 +103,9 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
 - Every solution shows the working a student should write in 2-4 lines, with the key figure or
   table (`solution_figure`) when it is the fastest route, and for MCQ says why the tempting
   distractor is wrong when that is the point of the question.
-- Compute every numeric answer in Python before writing it. PYQ answers are the official key and
-  are never changed; your solution must reach the official answer.
+- Solve every numeric answer step by step and give its "check" expression (see the schema): the app
+  recomputes it. PYQ answers are the official key and are never changed; your solution must reach
+  the official answer.
 
 ## 5. Originality (non-plagiarised questions)
 - Practice, sample-paper questions and worked examples are written from scratch: new scenario, new
@@ -116,10 +116,9 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
 - PYQs are reproduced verbatim only in the "Previous-year GATE questions" section, tagged with their
   source; they never appear as practice and practice never wears a GATE tag.
 
-## 6. Self-review checklist (before rendering)
+## 6. Self-review checklist (before you reply)
 - [ ] Every PYQ archetype for the topic is covered by a worked example or a practice question.
 - [ ] Each section: rule, method/formula, GATE-style worked example; traps where GATE sets them.
-- [ ] Figures wherever GATE would draw one (see figure_catalogue.md).
+- [ ] Figures wherever GATE would draw one (see FIGURES), at least one in every section the plan asks for.
 - [ ] Questions are objective, GATE-phrased, within 1.5-4 minutes, mix of MCQ/MSQ/NAT and 1/2 marks.
-- [ ] All numbers verified in Python; NAT stems state units and rounding; answer ranges set.
-- [ ] `check_gate_level.py` shows 0 errors; warnings read and either fixed or deliberately accepted.
+- [ ] Every number solved step by step with its "check"; NAT stems state units and rounding; answer ranges set.

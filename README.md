@@ -27,6 +27,7 @@ Plan and design decisions: `../PLAN.md`.
 2. https://share.streamlit.io → **Create app** → pick the repo, main file `streamlit_app.py`.
 3. **Advanced settings → Secrets**: paste the values, using `.streamlit/secrets.toml.example` as the template.
 4. After deploying, **Settings → Sharing**: make the app **private** and add the email addresses of your team. The app records the viewer's email as "created by".
+5. Access inside the app (secrets): `ALLOWED_DOMAINS` (default `edwisely.com`) and/or `ALLOWED_EMAILS` say who may use it; `ADMINS` may delete anyone's runs and books (everyone else only their own). Without a signed-in email the app refuses to open, so a public app cannot spend your credits.
 
 ### 4. Keep the free Supabase project awake
 Free projects pause after a week without use. Open the app weekly, or add a scheduled ping.
@@ -35,15 +36,17 @@ Free projects pause after a week without use. Open the app weekly, or add a sche
 ```
 pip install -r requirements.txt
 # graphviz must be installed for graph/automaton/tree figures (https://graphviz.org/download/)
-# put the secrets in .streamlit/secrets.toml
+# put the secrets in .streamlit/secrets.toml, plus ALLOW_LOCAL = "true" (there is no sign-in on a laptop)
 streamlit run streamlit_app.py
+python -m pytest tests        # offline checks of the content rules and the renderers (pip install pytest)
 ```
 
 ## How it works (short)
 - `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model.
-- `pipeline.py`: the steps for one PDF; every finished step is saved, so Resume never pays twice. `llm.py`: Claude / OpenAI / Gemini. `pyq.py`: PYQ sources, verified against the page text.
-- `jobs.py`: background workers, cancel, resume. `render/`: the PDF renderers (GATE frame, Non-GATE module), figures and the GATE checker.
+- `pipeline.py`: the steps for one PDF; every finished step is saved, so Resume never pays twice. Each model reply is tidied and checked by `content.py`; only broken items go back to the model (one repair), and what stays broken is left out with a note. GATE answer keys get arithmetic checks and a second-model check.
+- `llm.py`: Claude / OpenAI / Gemini (system prompt cached). `pyq.py`: PYQ sources, verified against the page text.
+- `jobs.py`: background workers (topics of a run in parallel, book processing), cancel, resume. `render/`: the PDF renderers (GATE frame, Non-GATE module), figures, the drawing check (`check_content.py`) and the GATE checker.
 - Models and prices live in `config.py` (one model per provider, one line each).
 
 ## Limits
-Books up to 100 MB / 1,500 pages, 20 topics per run, $5 per run (stops cleanly), 2 runs at once, 10 PYQ links. Scanned books are not supported (digital text only). Numeric answers are not independently verified yet: every GATE PDF carries that warning in the Runs page.
+Books up to 100 MB / 1,500 pages, 20 topics per run, $5 per run (stops cleanly), 4 PDFs at once (3 per run), 10 PYQ links. Scanned books are not supported (digital text only). Answer checks catch arithmetic slips and the second model catches many wrong keys, but review the notes on each PDF before publishing.

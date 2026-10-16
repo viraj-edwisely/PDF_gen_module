@@ -28,8 +28,8 @@ def labelled_box(kind, b):
 
 def quick_check(b, n):
     inner = [keep(Paragraph(f'QUICK CHECK · TOPIC {n:02d}', LABEL))]
-    for qa in b['items']:
-        inner += [keep(Paragraph(rich('Q. ' + qa['q']), QS)), P('A. ' + qa['a'])]
+    for qa in b.get('items') or []:
+        inner += [keep(Paragraph(rich('Q. ' + qa.get('q', '')), QS)), P('A. ' + qa.get('a', ''))]
     return [box(inner), Spacer(1, 8)]
 
 
@@ -37,9 +37,9 @@ def topic_body(items, n):
     out = []
     for b in items:
         t = b.get('type', 'para') if isinstance(b, dict) else 'para'
-        if t in BOXES: out += labelled_box(t, b)
-        elif t == 'quick_check': out += quick_check(b, n)
-        elif t == 'table' and b.get('title'): out += [CondPageBreak(40 * mm), Paragraph(html.escape(b['title'].upper()), LABEL)] + blocks([b])
+        if t in BOXES: out += safely(f'A "{t}" box', labelled_box, t, b)
+        elif t == 'quick_check': out += safely('A quick check', quick_check, b, n)
+        elif t == 'table' and b.get('title') and b.get('rows'): out += [CondPageBreak(40 * mm), Paragraph(html.escape(b['title'].upper()), LABEL)] + blocks([b])
         else: out += blocks([b])
     return out
 
@@ -92,15 +92,15 @@ def cards(items, border=LINE):
 
 
 def case_study(cs):
-    head = Table([[[Paragraph('CASE STUDY', KICK), Paragraph(rich(cs.get('subtitle', cs['title']), color='#FFFFFF'), BTITLE)]]], colWidths=[TW])
+    head = Table([[[Paragraph('CASE STUDY', KICK), Paragraph(rich(cs.get('subtitle') or cs.get('title', ''), color='#FFFFFF'), BTITLE)]]], colWidths=[TW])
     head.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), PURPLE), ('LEFTPADDING', (0, 0), (-1, -1), 14), ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10)]))
-    body = [Paragraph(rich(f"**{p['lead']}** {p['text']}" if p.get('lead') else p['text']), S['body']) for p in cs['paragraphs']]
+    body = [Paragraph(rich(f"**{p['lead']}** {p.get('text', '')}" if p.get('lead') else p.get('text', '')), S['body']) for p in cs.get('paragraphs') or []]
     return [head, Spacer(1, 6)] + body + ([Spacer(1, 4), box([P('**Discussion points:** ' + cs['discussion'])])] if cs.get('discussion') else [])
 
 
 def main():
     c = json.load(open(sys.argv[1], encoding='utf-8')); out = sys.argv[2]
-    title = c['title']; topics = c.get('topics', []); cs = c.get('case_study'); practice = c.get('practice', []); rev = c.get('revision')
+    title = c.get('title') or c.get('subject', 'Learning module'); topics = c.get('topics', []); cs = c.get('case_study'); practice = c.get('practice', []); rev = c.get('revision')
     n_top = len(topics)
 
     def first(cv, doc):
@@ -124,7 +124,7 @@ def main():
     head = Table([[[Paragraph(rich(title, color='#FFFFFF'), S['title']), Spacer(1, 8), bar, Spacer(1, 10),
                     Paragraph(rich(c.get('description', ''), color='#D9D0EE'), S['sub'])]]], colWidths=[TW], rowHeights=[76 * mm])
     head.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
-    inside = [(f'{k:02d}', t['title']) for k, t in enumerate(topics, 1)] + ([('CS', cs['title'])] if cs else [])
+    inside = [(f'{k:02d}', t.get('title', '')) for k, t in enumerate(topics, 1)] + ([('CS', cs.get('title', ''))] if cs else [])
     grid = Table([[Paragraph(f'<font name="Head" color="#4D2A87">{a}</font>   ' + rich(b), S['cell']) for a, b in inside[i:i + 2]] + [''] * (2 - len(inside[i:i + 2])) for i in range(0, len(inside), 2)],
                  colWidths=[TW / 2] * 2)
     grid.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 0.4, LINE), ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6), ('VALIGN', (0, 0), (-1, -1), 'TOP')]))
@@ -136,24 +136,25 @@ def main():
 
     story += [PageBreak()] + contents_block()
     for n, t in enumerate(topics, 1):
-        story += [PageBreak(), mark(banner(f'TOPIC {n:02d}', t['title'], t.get('tagline')), 0, f'{n:02d}  {t["title"]}'), Spacer(1, 8)] + topic_body(t.get('blocks', []), n)
-    if cs: story += section_head('APPLIED', 'Case Study: ' + cs['title']) + case_study(cs)
+        story += [PageBreak(), mark(banner(f'TOPIC {n:02d}', t.get('title', ''), t.get('tagline')), 0, f'{n:02d}  {t.get("title", "")}'), Spacer(1, 8)] + topic_body(t.get('blocks', []), n)
+    if cs: story += section_head('APPLIED', 'Case Study: ' + cs.get('title', '')) + safely('The case study', case_study, cs)
     if practice:
         story += section_head('PRACTICE', 'Practice Questions', 'Work through these before checking the model answers that follow.')
-        story.append(numbered_rows([(k, p.get('tag', ''), p['question']) for k, p in enumerate(practice, 1)]))
+        story += safely('The practice questions', lambda: [numbered_rows([(k, p.get('tag', ''), p.get('question', '')) for k, p in enumerate(practice, 1)])])
         story += section_head('SOLUTIONS', 'Model Answers', 'Numbered to match the practice questions.')
-        story.append(numbered_rows([(k, p.get('tag', ''), p['answer']) for k, p in enumerate(practice, 1)]))
+        story += safely('The model answers', lambda: [numbered_rows([(k, p.get('tag', ''), p.get('answer', '')) for k, p in enumerate(practice, 1)])])
     if rev:
         story += section_head('RECAP', 'Revision Sheet', 'A fast pass over everything in this module before you move on.')
-        story += [Paragraph('Key concepts at a glance', S['h2']), cards([(x['title'], ['• ' + y for y in x['points']]) for x in rev.get('concepts', [])])]
-        if rev.get('distinctions'):
-            d = rev['distinctions']; story += [Paragraph('Important distinctions', S['h2']), styled_table(d['header'], d['rows'])]
-        if rev.get('mistakes'): story += [Paragraph('Common mistakes to avoid', S['h2']), cards([(m['title'], [m['text']]) for m in rev['mistakes']], PURPLE)]
+        if rev.get('concepts'):
+            story += [Paragraph('Key concepts at a glance', S['h2'])] + safely('The concept cards', lambda: [cards([(x.get('title', ''), ['• ' + y for y in x.get('points', [])]) for x in rev['concepts']])])
+        d = rev.get('distinctions') or {}
+        if d.get('header') and d.get('rows'): story += [Paragraph('Important distinctions', S['h2'])] + blocks([dict(d, type='table')])
+        if rev.get('mistakes'): story += [Paragraph('Common mistakes to avoid', S['h2'])] + safely('The mistakes cards', lambda: [cards([(m.get('title', ''), [m.get('text', '')]) for m in rev['mistakes']], PURPLE)])
         if rev.get('checklist'):
-            story += [Paragraph(html.escape(rev.get('checklist_title', 'Questions to ask before presenting any statistic')), S['h2']),
+            story += [Paragraph(html.escape(rev.get('checklist_title') or 'Checklist before you move on'), S['h2']),
                       box([Paragraph(f'{k}. ' + rich(x), S['body']) for k, x in enumerate(rev['checklist'], 1)], bar=YEL)]
     doc.multiBuild(story)
-    print('written', out)
+    finish(out)
 
 
 if __name__ == '__main__':

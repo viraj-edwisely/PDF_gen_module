@@ -1,35 +1,27 @@
-# Non-GATE module content JSON (input to render/render_nongate.py)
+# Non-GATE module content JSON
 
-```json
-{
-  "title": "module title", "description": "2-3 sentences for the cover (under 350 characters)",
-  "subject": "...", "study_time": "3-4 hours, self-paced", "audience": "who it is for",
-  "topics": [ {"title": "...", "tagline": "one line", "blocks": [ BLOCK, ... ]} ],
-  "case_study": {"title": "...", "subtitle": "...", "paragraphs": [{"lead": "Situation.", "text": "..."}], "discussion": "..."},
-  "practice": [ {"tag": "Topic name · Application", "question": "...", "answer": "model answer"} ],
-  "revision": {
-    "concepts": [{"title": "01 · Topic", "points": ["..."]}],
-    "distinctions": {"header": ["This", "vs. this", "Key difference"], "rows": [["...", "...", "..."]]},
-    "mistakes": [{"title": "...", "text": "..."}],
-    "checklist_title": "...", "checklist": ["..."]
-  }
-}
-```
-`case_study` and `revision` are optional. Every key shown in a list item is required.
+The app assembles the module from the parts each task asks for:
+{"title", "description", "subject", "study_time", "audience", "topics": [{"title", "tagline", "blocks": [ BLOCK, ... ]}],
+ "case_study", "practice", "revision"}  (case_study and revision may be null when the user leaves them out).
 
-## BLOCK types
+## BLOCK types (use exactly these field names)
 | type | fields | renders as |
 |---|---|---|
 | `situation` | text | lavender box SITUATION: the real-world setup that opens a topic |
 | `concept` | text | lavender box CONCEPT: the key idea, **bold** key terms |
-| `worked_example` | text, optional title | yellow box WORKED EXAMPLE: numbers worked through |
+| `worked_example` | text, title (optional), check (optional) | yellow box WORKED EXAMPLE: numbers worked through |
 | `pitfall` | text | yellow box COMMON PITFALL |
 | `note` | text | lavender box NOTE |
 | `quick_check` | items: [{q, a}] | Q&A box at the end of a topic (2 questions) |
 | `para` | text | plain paragraph (a bare string also works) |
-| `table` | title (optional), header[], rows[][] | purple-header table |
-| `bullets` / `numbered` | items[] | list |
-| `formula` | latex (no $) | centred maths |
-| `figure` | kind, spec, caption, width | brand figure (see the figure catalogue) |
+| `table` | title (optional), header: [...], rows: [[...], ...] | purple-header table |
+| `bullets` / `numbered` | items: [string, ...] | list |
+| `formula` | latex (no $) | centred maths, one equation |
+| `figure` | kind, spec, title, caption, width | a figure drawn by the app (see FIGURES) |
+There are no image blocks.
 
-Text markup: `**bold**`, `*italic*`, inline maths `$...$`, a blank line (`\n\n`) starts a new paragraph.
+A worked example with a numeric result has "check": {"expr": "plain arithmetic that recomputes the result", "answer": "the result as written"},
+e.g. {"expr": "(120 - 100) / 100 * 100", "answer": "20"}. Allowed in expr: numbers, + - * / // % **, parentheses and
+ceil, floor, round, sqrt, log, log2, log10, exp, abs, min, max. No variables, units or text.
+
+Text markup: `**bold**`, `*italic*`, inline maths `$...$` (see MATHS), a blank line (`\n\n`) starts a new paragraph, `\$` is a literal dollar.

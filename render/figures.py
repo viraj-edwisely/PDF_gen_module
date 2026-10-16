@@ -1,33 +1,25 @@
 #!/usr/bin/env python3
 """Edwisely-styled figures for topic PDFs - any GATE paper, any subject.
 
-Every figure is described by a small JSON spec, so a topic content JSON can carry its own figures:
-    {"type": "figure", "kind": "gantt", "spec": {...}, "caption": "...", "width": 1.0}
-The renderer (build_topic_pdf.py) calls render(kind, spec) and caches the PNG by content hash.
+Every figure is described by a small JSON spec inside the content JSON:
+    {"type": "figure", "kind": "gantt", "spec": {...}, "title": "...", "caption": "...", "width": 1.0}
+The renderers call render(kind, spec), which caches the PNG by content hash.
 
-Kinds (spec fields are documented in references/figure_catalogue.md, with subject-wise examples):
-    gantt     - time bars on one or more rows: CPU/disk scheduling, pipelining, CPM bar charts, TDM slots
-    plot      - x-y curves, functions, parametric curves, points, shading, annotations: SFD/BMD,
-                stress-strain, hydrographs, Mohr's circle, Bode, waveforms, distributions, regions
-    bars      - grouped or stacked bar chart: data interpretation, histograms, comparisons
-    graph     - nodes and edges via graphviz: trees, heaps, BST, automata, DAG/CPM networks, RAG,
-                precedence graphs, block diagrams, flowcharts, ER sketches, signal-flow graphs
-    cells     - rows of boxed cells: arrays, memory/frames, page tables, cache lines, registers,
-                stacks/queues, hash tables, bit fields, K-map style grids
-    beam      - structural beam with supports, point loads, UDL/UVL and moments (CE/ME)
-    circuit   - electrical circuit via schemdraw (EE/EC/IN); pip-installs schemdraw on first use
-    custom    - NOT a JSON kind: write your own matplotlib script, call figures.brand() first,
-                save with figures.save(fig, path) and use an `image` block.
+Kinds: gantt (alias timeline), plot, bars, graph, cells, beam, circuit. The exact spec of each kind is the docstring
+of its function below; reference() turns those docstrings and the GALLERY examples into the text the model reads,
+so the prompt can never drift from the code.
 
-CLI:  python3 figures.py <kind> spec.json out.png      (quick look at one figure)
-      python3 figures.py --gallery out_dir             (renders one sample of every kind)
+CLI:  python figures.py <kind> spec.json out.png      (draw one figure)
+      python figures.py --gallery out_dir             (draw every GALLERY example)
+      python figures.py --reference                   (print the spec reference given to the model)
 """
-import ast, hashlib, json, os, shutil, subprocess, sys, tempfile, textwrap
+import hashlib, json, os, shutil, subprocess, sys, tempfile, textwrap
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import numpy as np
+from safe_eval import safe_eval as _safe_eval
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, 'assets', 'fonts')
@@ -135,25 +127,6 @@ def gantt(spec, out):
 
 
 # ---------------------------------------------------------------- plot
-_ALLOWED_NODES = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Load, ast.Constant, ast.Compare, ast.Tuple,
-                  ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod, ast.FloorDiv, ast.USub, ast.UAdd,
-                  ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
-
-
-def _safe_eval(expr, **vars_):
-    """Evaluate a model-written expression: numbers, x/t, whitelisted numpy functions and arithmetic only
-    (no attribute access, subscripts or lambdas), so a hijacked spec cannot run code."""
-    env = {k: getattr(np, k) for k in ('sin', 'cos', 'tan', 'exp', 'log', 'log10', 'sqrt', 'abs', 'pi', 'e', 'where',
-                                       'maximum', 'minimum', 'heaviside', 'arctan', 'sinh', 'cosh', 'tanh', 'clip', 'sign', 'floor')}
-    env.update(vars_)
-    tree = ast.parse(str(expr), mode='eval')
-    for node in ast.walk(tree):
-        if not isinstance(node, _ALLOWED_NODES): raise ValueError(f'expression not allowed: {expr!r}')
-        if isinstance(node, ast.Name) and node.id not in env: raise ValueError(f'unknown name {node.id!r} in {expr!r}')
-        if isinstance(node, ast.Call) and not isinstance(node.func, ast.Name): raise ValueError(f'expression not allowed: {expr!r}')
-    return eval(compile(tree, '<expr>', 'eval'), {'__builtins__': {}}, env)
-
-
 def plot(spec, out):
     """spec: {"curves": [CURVE...], "xlabel", "ylabel", "title", "xlim", "ylim", "equal": bool, "grid": bool,
               "legend": bool, "points": [{"x","y","label","color"}], "hlines": [y|{y,label,style}],
@@ -511,12 +484,25 @@ GALLERY = {
                                                {'el': 'Capacitor', 'dir': 'down', 'label': '10 µF', 'loc': 'bottom', 'id': 'C'}, {'el': 'Line', 'dir': 'left', 'length': 2.5}]}),
 }
 
+def reference():
+    """Markdown for the prompt: each kind's spec (its docstring) and one working example per kind from GALLERY."""
+    out = []
+    for kind, fn in KINDS.items():
+        if kind == 'timeline': continue
+        ex = next((json.dumps(sp, ensure_ascii=False) for k, sp in GALLERY.values() if k == kind), None)
+        head = f'### kind "{kind}"' + (' (alias "timeline")' if kind == 'gantt' else '')
+        out.append(head + '\n' + textwrap.dedent('    ' + fn.__doc__.strip()) + (f'\nWorking example spec:\n{ex}' if ex else ''))
+    return '\n\n'.join(out)
+
+
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == '--gallery':
         os.makedirs(sys.argv[2], exist_ok=True)
         for name, (k, s) in GALLERY.items():
             try: print('ok  ', render(k, s, os.path.join(sys.argv[2], name + '.png')))
             except Exception as ex: print('FAIL', name, ex)
+    elif sys.argv[1:] == ['--reference']:
+        sys.stdout.reconfigure(encoding='utf-8'); print(reference())
     elif len(sys.argv) == 4:
         print(render(sys.argv[1], json.load(open(sys.argv[2])), sys.argv[3]))
     else:

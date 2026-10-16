@@ -1,4 +1,4 @@
-"""Book ingest: PDF -> page text, units, chunks with embeddings. Called from the Library page."""
+"""Book ingest: PDF -> page text, units, chunks with embeddings. Run by the background workers (jobs.py) after an upload."""
 import collections, re
 import pymupdf
 import db

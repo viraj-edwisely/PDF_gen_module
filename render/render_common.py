@@ -64,7 +64,7 @@ TEX_FIXES = {r'\land': r'\wedge', r'\lor': r'\vee', r'\lnot': r'\neg', r'\implie
 
 def normalize_tex(tex):
     tex = re.sub(r'\\[A-Za-z]+', lambda m: TEX_FIXES.get(m.group(0), m.group(0)), tex)
-    return re.sub(r'\\mathrm\{([^{}]*)\}', lambda m: '\\mathrm{' + m.group(1).replace(' ', '\\ ') + '}', tex)     # mathtext drops spaces inside \mathrm
+    return re.sub(r'\\mathrm\{([^{}]*)\}', lambda m: '\\mathrm{' + re.sub(r'(?<!\\) ', lambda _: '\\ ', m.group(1)) + '}', tex)     # mathtext drops spaces inside \mathrm
 
 
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
@@ -136,6 +136,7 @@ def styled_table(header, rows, widths=None, total_row=False, avail=None):
     widths = widths or [avail / n] * n
     body = []
     for i, r in enumerate(rows):
+        r = (list(r) + [''] * n)[:n]                     # every row as wide as the header
         st_ = S['cellb'] if total_row and i == len(rows) - 1 else S['cell']
         body.append([Paragraph(rich('' if c is None else str(c)), st_) for c in r])
     data = [[Paragraph(rich(h, color='#FFFFFF'), S['cellh']) for h in header]] + body
@@ -186,65 +187,91 @@ def image(path, maxw=None, maxh=115 * mm, width=None, align='CENTER'):
 
 
 def figure_path(b):
-    """Path of a figure/image block, rendering figures.py specs on demand."""
-    if b.get('kind'): return FIG.render(b['kind'], b.get('spec', {}))
-    return b.get('path')
+    """PNG of a figure object {kind, spec}, drawn by figures.py (cached)."""
+    return FIG.render(b['kind'], b.get('spec', {}))
+
+
+WARNINGS = []      # what had to be left out of the PDF; printed as JSON at the end so the pipeline can show it
+
+
+def warn(text):
+    if text not in WARNINGS: WARNINGS.append(text)
+
+
+def safely(what, fn, *args):
+    """Flowables from fn(*args), or none (with a warning) if this part cannot be drawn: one bad part never stops the PDF."""
+    try: return fn(*args)
+    except Exception as e:
+        warn(f'{what} could not be drawn and was left out ({type(e).__name__}: {str(e)[:120]})'); return []
+
+
+def finish(out):
+    print(json.dumps({'written': out, 'warnings': WARNINGS}))
+
+
+BLOCK_FIELD = {'para': 'text', 'subhead': 'text', 'bullets': 'items', 'numbered': 'items', 'formula': 'latex', 'code': 'text', 'callout': 'text'}
 
 
 def blocks(items, avail=None):
-    """Render BLOCKs (see references/content_schema.md). avail = width available (inside a box it is smaller)."""
-    avail = avail or TW
+    """Render BLOCKs (prompts/gate/content_schema.md), each on its own. avail = width available (inside a box it is smaller)."""
     out = []
-    for b in items:
+    for b in items or []:
         if isinstance(b, str): b = {'type': 'para', 'text': b}
-        t = b.get('type', 'para')
-        if t == 'para': out.append(P(b['text']))
-        elif t == 'subhead': out.append(keep(Paragraph(rich(b['text']), S['subhead'])))
-        elif t == 'bullets':
-            for it in b['items']:
-                out.append(Paragraph(rich(it), ParagraphStyle('bl', parent=S['body'], leftIndent=12, bulletIndent=2),
-                                     bulletText='•'))
-        elif t == 'numbered':
-            for k, it in enumerate(b['items'], 1):
-                out.append(Paragraph(rich(it), ParagraphStyle('nl', parent=S['body'], leftIndent=14, bulletIndent=0),
-                                     bulletText=f'{k}.'))
-        elif t == 'formula':
-            try:
-                fn, w, h = math_img(b['latex'], 11, True)
-                if w > avail: h, w = h * avail / w, avail
-                im = Image(fn, w, h); im.hAlign = 'CENTER'
-                out += [Spacer(1, 3), im, Spacer(1, 5)]
-            except Exception:       # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
-                out.append(Paragraph(html.escape(tex_text(b['latex'])), S['body']))
-        elif t == 'table':
-            out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
-        elif t == 'code':
-            chars = int((avail - 24) / (S['mono'].fontSize * 0.602))      # long lines are wrapped instead of running out of the box
-            out += [box([Preformatted(b['text'], S['mono'], maxLineLength=chars, splitChars=' ')], bg=colors.HexColor('#F7F5FC'), bar=LINE, width=avail), Spacer(1, 6)]
-        elif t == 'callout':
-            out += [box([Paragraph(rich(b['text'], color='#FFFFFF'), S['callout'])], bg=PURPLE, bar=YEL, width=avail), Spacer(1, 6)]
-        elif t in ('note', 'trap'):
-            title = b.get('title', 'Common GATE trap' if t == 'trap' else None)
-            inner = ([keep(Paragraph(html.escape(title), S['boxtitle']))] if title else []) + \
-                    ([P(x) for x in b['text'].split('\n\n')] if b.get('text') else []) + blocks(b.get('blocks', []), INNER)
-            out += [box(inner, width=avail), Spacer(1, 6)]
-        elif t in ('image', 'figure'):
-            fp = figure_path(b)
-            wd = b.get('width') or (1.0 if b.get('kind') in ('gantt', 'timeline') else None)
-            grp = ([Paragraph(rich(b['title']), S['figtitle'])] if b.get('title') else []) + \
-                  [image(fp, avail, width=wd, maxh=b.get('max_height_mm', 115) * mm)] + ([P(b['caption'], 'small')] if b.get('caption') else [])
-            for f in grp[:-1]: keep(f)      # inside a box, box() glues these to the next flowable (a KeepTogether cannot sit in a table cell)
-            out += ([KeepTogether(grp)] if len(grp) > 1 and avail >= TW else grp) + [Spacer(1, 4)]
-        elif t == 'example':
-            title = re.sub(r'^((worked )?example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
-            inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(title) if title else ""}</font>', S['body']))]
-            inner += text_or_blocks(b.get('problem'))
-            inner.append(keep(Paragraph('<font name="HeadM" color="#4D2A87">Solution</font>', S['body'])))
-            inner += text_or_blocks(b.get('solution'))
-            out += [box(inner, width=avail), Spacer(1, 8)]
-        elif t == 'spacer': out.append(Spacer(1, b.get('height', 6)))
-        elif t == 'pagebreak': out.append(PageBreak())
-        else: raise ValueError(f'unknown block type {t!r}')
+        if isinstance(b, dict): out += safely(f'A "{b.get("type", "para")}" block', block, b, avail or TW)
+    return out
+
+
+def block(b, avail):
+    out = []
+    t = b.get('type', 'para')
+    if (t in BLOCK_FIELD and not b.get(BLOCK_FIELD[t])) or (t == 'table' and not (b.get('header') and b.get('rows'))): return out     # nothing to show
+    if t == 'para': out.append(P(b['text']))
+    elif t == 'subhead': out.append(keep(Paragraph(rich(b['text']), S['subhead'])))
+    elif t == 'bullets':
+        for it in b['items']:
+            out.append(Paragraph(rich(it), ParagraphStyle('bl', parent=S['body'], leftIndent=12, bulletIndent=2),
+                                 bulletText='•'))
+    elif t == 'numbered':
+        for k, it in enumerate(b['items'], 1):
+            out.append(Paragraph(rich(it), ParagraphStyle('nl', parent=S['body'], leftIndent=14, bulletIndent=0),
+                                 bulletText=f'{k}.'))
+    elif t == 'formula':
+        try:
+            fn, w, h = math_img(b['latex'], 11, True)
+            if w > avail: h, w = h * avail / w, avail
+            im = Image(fn, w, h); im.hAlign = 'CENTER'
+            out += [Spacer(1, 3), im, Spacer(1, 5)]
+        except Exception:       # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
+            out.append(Paragraph(html.escape(tex_text(b['latex'])), S['body']))
+    elif t == 'table':
+        out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
+    elif t == 'code':
+        chars = int((avail - 24) / (S['mono'].fontSize * 0.602))      # long lines are wrapped instead of running out of the box
+        out += [box([Preformatted(b['text'], S['mono'], maxLineLength=chars, splitChars=' ')], bg=colors.HexColor('#F7F5FC'), bar=LINE, width=avail), Spacer(1, 6)]
+    elif t == 'callout':
+        out += [box([Paragraph(rich(b['text'], color='#FFFFFF'), S['callout'])], bg=PURPLE, bar=YEL, width=avail), Spacer(1, 6)]
+    elif t in ('note', 'trap'):
+        title = b.get('title', 'Common GATE trap' if t == 'trap' else None)
+        inner = ([keep(Paragraph(html.escape(title), S['boxtitle']))] if title else []) + \
+                ([P(x) for x in b['text'].split('\n\n')] if b.get('text') else []) + blocks(b.get('blocks', []), INNER)
+        out += [box(inner, width=avail), Spacer(1, 6)]
+    elif t == 'figure':
+        fp = figure_path(b)
+        wd = b.get('width') or (1.0 if b.get('kind') in ('gantt', 'timeline') else None)
+        grp = ([Paragraph(rich(b['title']), S['figtitle'])] if b.get('title') else []) + \
+              [image(fp, avail, width=wd, maxh=b.get('max_height_mm', 115) * mm)] + ([P(b['caption'], 'small')] if b.get('caption') else [])
+        for f in grp[:-1]: keep(f)      # inside a box, box() glues these to the next flowable (a KeepTogether cannot sit in a table cell)
+        out += ([KeepTogether(grp)] if len(grp) > 1 and avail >= TW else grp) + [Spacer(1, 4)]
+    elif t == 'example':
+        title = re.sub(r'^((worked )?example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
+        inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(title) if title else ""}</font>', S['body']))]
+        inner += text_or_blocks(b.get('problem'))
+        inner.append(keep(Paragraph('<font name="HeadM" color="#4D2A87">Solution</font>', S['body'])))
+        inner += text_or_blocks(b.get('solution'))
+        out += [box(inner, width=avail), Spacer(1, 8)]
+    elif t == 'spacer': out.append(Spacer(1, b.get('height', 6)))
+    elif t == 'pagebreak': out.append(PageBreak())
+    else: raise ValueError(f'unknown block type {t!r}')
     return out
 
 
