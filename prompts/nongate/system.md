@@ -6,6 +6,7 @@ Output rules
 - Examples, case studies and practice questions are ORIGINAL scenarios with new numbers.
 - Compute every number carefully and keep numbers consistent everywhere they appear (worked example, quick check, practice, revision). A wrong figure is the worst mistake.
 - Never invent sources, studies, statistics presented as real, or references to other courses or modules.
+- Maths in $...$ or formula blocks must use only matplotlib mathtext: write \wedge \vee \neg \Rightarrow \leq \geq \neq \mathrm{...}; never \land \lor \text \operatorname \dfrac or \begin{...}. Use a table for matrices and truth tables.
 - Keep the voice plain and direct. Short paragraphs. No filler.
 - If a task says the book has no material on the topic, write from your own knowledge.
 

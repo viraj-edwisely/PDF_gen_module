@@ -3,7 +3,7 @@ Write concept-note sections for the GATE topic "{{TOPIC}}" ({{PAPER}} · {{SUBJE
 Sections to write now (from the plan):
 {{SECTIONS}}
 
-Headings already written in earlier calls (do not repeat their content): {{DONE}}
+Other sections of this PDF, written separately at the same time (do not repeat their content): {{DONE}}
 GATE question archetypes to equip the student for: {{ARCHETYPES}}
 
 {{BOOK_NOTE}}

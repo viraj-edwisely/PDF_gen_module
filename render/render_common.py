@@ -56,13 +56,27 @@ INNER = TW - 22          # width inside a box (bar + paddings)
 MATHDIR = os.path.join(tempfile.gettempdir(), 'topicpdf_math'); os.makedirs(MATHDIR, exist_ok=True)
 
 
+# LaTeX commands that matplotlib's mathtext does not know, and what to draw instead
+TEX_FIXES = {r'\land': r'\wedge', r'\lor': r'\vee', r'\lnot': r'\neg', r'\implies': r'\Rightarrow', r'\iff': r'\Leftrightarrow', r'\le': r'\leq', r'\ge': r'\geq',
+             r'\ne': r'\neq', r'\dfrac': r'\frac', r'\tfrac': r'\frac', r'\text': r'\mathrm', r'\textrm': r'\mathrm', r'\operatorname': r'\mathrm', r'\dots': r'\ldots',
+             r'\bmod': r'\ \mathrm{mod}\ ', r'\pmod': r'\ \mathrm{mod}\ '}
+
+
+def normalize_tex(tex):
+    return re.sub(r'\\[A-Za-z]+', lambda m: TEX_FIXES.get(m.group(0), m.group(0)), tex)
+
+
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
+    tex = normalize_tex(tex)
     key = hashlib.md5(f'{tex}|{size}|{display}|{color}'.encode()).hexdigest()
     fn = os.path.join(MATHDIR, key + '.png')
     if not os.path.exists(fn):
-        fig = plt.figure(figsize=(0.01, 0.01)); fig.text(0, 0, f'${tex}$', fontsize=size * (1.25 if display else 1),
-                                                         color=color)
-        fig.savefig(fn, dpi=300, bbox_inches='tight', pad_inches=0.02, transparent=True); plt.close(fig)
+        fig = plt.figure(figsize=(0.01, 0.01))
+        try:
+            fig.text(0, 0, f'${tex}$', fontsize=size * (1.25 if display else 1), color=color)
+            fig.savefig(fn, dpi=300, bbox_inches='tight', pad_inches=0.02, transparent=True)
+        finally:
+            plt.close(fig)
     from PIL import Image as PI
     w, h = PI.open(fn).size
     return fn, w * 72 / 300, h * 72 / 300
@@ -173,10 +187,13 @@ def blocks(items, avail=None):
                 out.append(Paragraph(rich(it), ParagraphStyle('nl', parent=S['body'], leftIndent=14, bulletIndent=0),
                                      bulletText=f'{k}.'))
         elif t == 'formula':
-            fn, w, h = math_img(b['latex'], 11, True)
-            if w > avail: h, w = h * avail / w, avail
-            im = Image(fn, w, h); im.hAlign = 'CENTER'
-            out += [Spacer(1, 3), im, Spacer(1, 5)]
+            try:
+                fn, w, h = math_img(b['latex'], 11, True)
+                if w > avail: h, w = h * avail / w, avail
+                im = Image(fn, w, h); im.hAlign = 'CENTER'
+                out += [Spacer(1, 3), im, Spacer(1, 5)]
+            except Exception:       # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
+                out.append(Paragraph(html.escape(b['latex']), S['mono']))
         elif t == 'table':
             out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
         elif t == 'code':

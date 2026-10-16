@@ -45,7 +45,7 @@ provider = st.selectbox('Writer', ready, help='The AI provider that writes the c
 scope_tokens = db.sql('select coalesce(sum(length(text)), 0) / 4 n from pages where book_id=%s and pdf_page between %s and %s', (book['id'], start + book['page_offset'], end + book['page_offset']))[0]['n']
 n = max(1, len(topics))
 context = scope_tokens if scope_tokens <= SCOPE_TOKEN_BUDGET else TOPIC_TOKEN_BUDGET
-calls, out_tokens = (13, 40_000) if mode == 'gate' else (n + 3, 9_000 * n + 12_000)
+calls, out_tokens = (4, 40_000) if mode == 'gate' else (2 + -(-n // 3), 9_000 * n + 12_000)    # GATE: plan, 2 notes, questions; Non-GATE: plan, topics in threes, end matter
 estimate = cost(provider, calls * (context + 15_000), out_tokens) * (n if mode == 'gate' else 1)
 
 errors = []

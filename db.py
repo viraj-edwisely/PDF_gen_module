@@ -19,7 +19,7 @@ def _dsn():
 @functools.cache
 def _pool():
     # prepare_threshold=None: Supabase's pooler (transaction mode) does not support prepared statements
-    return ConnectionPool(_dsn(), min_size=1, max_size=8, open=True,
+    return ConnectionPool(_dsn(), min_size=1, max_size=12, open=True,
                           kwargs={'autocommit': True, 'row_factory': dict_row, 'prepare_threshold': None})
 
 

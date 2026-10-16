@@ -5,8 +5,9 @@ GATE: context -> PYQs -> plan -> notes -> practice -> sample paper -> wrap-up ->
 Non-GATE: context -> plan -> one call per topic -> end matter -> checks -> PDF.
 """
 import json, os, re, subprocess, sys, tempfile
+from concurrent.futures import ThreadPoolExecutor
 import db, llm, pyq, retrieve
-from config import PROVIDERS
+from config import PARALLEL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = os.path.join(HERE, 'render')
@@ -135,6 +136,22 @@ def question_errors(paper, practice=None, sample=None, prior_practice=None):
     return [e for e in check(stub)[0] if re.match(r'^(P\d+|practice)' if practice else r'^(S\d+|sample paper)', e)]
 
 
+def questions_errors(paper):
+    def check_questions(out):
+        if not isinstance(out, dict): return ['the reply must be a JSON object']
+        practice, sample = out.get('practice'), out.get('sample_paper')
+        errs = question_errors(paper, practice=practice) if isinstance(practice, list) else ['"practice" must be a list']
+        errs += question_errors(paper, sample=sample, prior_practice=practice) if isinstance(sample, dict) and isinstance(practice, list) else ['"sample_paper" must be an object']
+        return errs + ([] if out.get('traps') and out.get('revision_card') else ['need "traps" and "revision_card"'])
+    return check_questions
+
+
+def topics_errors(out, group):
+    topics = out.get('topics') if isinstance(out, dict) else None
+    if not isinstance(topics, list) or len(topics) != len(group): return [f'"topics" must be a list of {len(group)} entries']
+    return [e for t, g in zip(topics, group) for e in block_errors(t.get('blocks'), NONGATE_BLOCKS, g['title'])]
+
+
 # ---------------------------------------------------------------- shared steps
 def book_note(found):
     return 'Book material for this topic follows.' if found else 'The book has NO material on this topic in the chosen scope: write it from your own knowledge.'
@@ -231,30 +248,26 @@ def gate(job):
     plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or ''), plan_errors)
     archetypes = '; '.join(plan.get('archetypes') or [])
 
-    notes, sections = [], plan['sections']
-    for i in range(0, len(sections), 2):
-        group = sections[i:i + 2]
-        job.progress(f'Writing notes {min(i + 2, len(sections))} of {len(sections)}')
-        out = job.ask(f'notes_{i}', fill(read('gate/notes.md'), **base, SECTIONS=json.dumps(group, ensure_ascii=False), DONE=', '.join(n['heading'] for n in notes) or '(none)', ARCHETYPES=archetypes),
-                      notes_errors(group))
-        notes += out['notes']
-    headings = ', '.join(n['heading'] for n in notes)
+    # three calls depend only on the plan, so they run at the same time: the two halves of the notes, and all the questions
+    sections = plan['sections']
+    headings = ', '.join(s['heading'] for s in sections)
+    half = (len(sections) + 1) // 2
+    groups = [sections[:half], sections[half:]] if len(sections) > 3 else [sections]
 
-    job.progress('Writing practice questions')
-    practice = job.ask('practice', fill(read('gate/practice.md'), **base, ARCHETYPES=archetypes, HEADINGS=headings, PYQS=pyq_brief),
-                       lambda out: question_errors(o['paper'], practice=out.get('practice')) if isinstance(out.get('practice'), list) else ['"practice" must be a list'])['practice']
-    job.progress('Writing the sample paper')
-    stems = '\n'.join('- ' + q['question'][:140] for q in practice)
-    sample = job.ask('sample', fill(read('gate/sample.md'), **base, ARCHETYPES=archetypes, PRACTICE_STEMS=stems),
-                     lambda out: question_errors(o['paper'], sample=out.get('sample_paper'), prior_practice=practice) if isinstance(out.get('sample_paper'), dict) else ['"sample_paper" must be an object'])['sample_paper']
-    job.progress('Writing traps and revision card')
-    wrap = job.ask('wrapup', fill(read('gate/wrapup.md'), **base, HEADINGS=headings, ARCHETYPES=archetypes),
-                   lambda out: [] if out.get('traps') and out.get('revision_card') else ['need "traps" and "revision_card"'])
+    def write_notes(k, group):
+        others = ', '.join(s['heading'] for s in sections if s not in group) or '(none)'
+        return job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **base, SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes), notes_errors(group))['notes']
+
+    job.progress('Writing notes and questions (at the same time)')
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        note_jobs = [pool.submit(write_notes, k, g) for k, g in enumerate(groups)]
+        q_job = pool.submit(job.ask, 'questions', fill(read('gate/questions.md'), **base, ARCHETYPES=archetypes, HEADINGS=headings, PYQS=pyq_brief), questions_errors(o['paper']))
+        notes, q = [n for f in note_jobs for n in f.result()], q_job.result()
 
     def assemble():
         c = {'paper': o['paper'], 'subject': o['subject'], 'topic_name': topic, 'syllabus_line': plan.get('syllabus_line', ''), 'subtitle': plan.get('subtitle', ''),
-             'objectives': plan['objectives'], 'prerequisites': plan.get('prerequisites', []), 'notes': notes, 'traps': wrap['traps'], 'revision_card': wrap['revision_card'],
-             'pyqs': pyqs, 'practice': practice, 'sample_paper': sample}
+             'objectives': plan['objectives'], 'prerequisites': plan.get('prerequisites', []), 'notes': notes, 'traps': q['traps'], 'revision_card': q['revision_card'],
+             'pyqs': pyqs, 'practice': q['practice'], 'sample_paper': q['sample_paper']}
         for rnd in (1, 2):
             errors = check(c)[0]
             if not errors: break
@@ -292,14 +305,21 @@ def nongate(job):
     plan = job.ask('plan', fill(read('nongate/plan.md'), **base, TOPICS='; '.join(names), STUDY_TIME=o.get('study_time') or '', AUDIENCE=o.get('audience') or '',
                                 BOOK_NOTE=book_note(any_found), BOOK=ctx['whole'] or '\n\n'.join(ctx['per_topic'])[:160_000]), plan_errors)
 
-    topics = []
-    for i, t in enumerate(plan['topics']):
-        job.progress(f"Writing topic {i + 1} of {len(plan['topics'])}")
-        j = min(i, len(names) - 1)
-        out = job.ask(f'topic_{i}', fill(read('nongate/topic.md'), **base, N=i + 1, MODULE=plan['title'], TITLE=t['title'], TAGLINE=t.get('tagline', ''), FOCUS=t.get('focus', ''),
-                                         OTHERS=', '.join(x['title'] for x in plan['topics'] if x is not t), BOOK_NOTE=book_note(ctx['found'][j]), BOOK=ctx['whole'] or ctx['per_topic'][j]),
-                      lambda out: block_errors(out.get('blocks'), NONGATE_BLOCKS, t['title']) if isinstance(out, dict) else ['reply must be an object with "blocks"'])
-        topics.append({'title': t['title'], 'tagline': t.get('tagline', ''), 'blocks': out['blocks']})
+    # topics are written three to a call, and the calls run at the same time
+    plan_topics = plan['topics']
+    groups = [list(range(i, min(i + 3, len(plan_topics)))) for i in range(0, len(plan_topics), 3)]
+
+    def write_topics(k, idx):
+        group, js = [plan_topics[i] for i in idx], list(dict.fromkeys(min(i, len(names) - 1) for i in idx))
+        book_text = ctx['whole'] or '\n\n'.join(f"### {names[j]}\n{ctx['per_topic'][j]}" for j in js)
+        out = job.ask(f'topics_{k}', fill(read('nongate/topic.md'), **base, MODULE=plan['title'], TOPICS=json.dumps(group, ensure_ascii=False),
+                                          OTHERS=', '.join(t['title'] for t in plan_topics if t not in group) or '(none)',
+                                          BOOK_NOTE=book_note(any(ctx['found'][j] for j in js)), BOOK=book_text), lambda out: topics_errors(out, group))
+        return [{'title': g['title'], 'tagline': g.get('tagline', ''), 'blocks': t['blocks']} for g, t in zip(group, out['topics'])]
+
+    job.progress(f'Writing {len(plan_topics)} topics (at the same time)')
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        topics = [t for part in pool.map(write_topics, range(len(groups)), groups) for t in part]
 
     job.progress('Writing case study, practice and revision sheet')
     summary = '\n'.join(f"{k}. {t['title']}: {t.get('tagline', '')}" for k, t in enumerate(topics, 1))

@@ -14,6 +14,7 @@ MAX_TOPICS = 20           # per run
 MAX_URLS = 10             # PYQ source URLs per run
 MAX_BOOK_MB, MAX_PAGES = 100, 1500
 WORKERS = 2               # runs processed at the same time
+PARALLEL = 4              # model calls running at the same time inside one PDF
 SCOPE_TOKEN_BUDGET = 40_000   # scope text up to this size is sent whole, in page order
 TOPIC_TOKEN_BUDGET = 8_000    # per-topic retrieval budget for larger scopes
 STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted
