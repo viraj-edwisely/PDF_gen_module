@@ -66,11 +66,14 @@ def main():
     def later(cv, doc):
         cv.saveState()
         cv.setFillColor(PURPLE); cv.rect(0, H - 9 * mm, W, 9 * mm, stroke=0, fill=1)
-        cv.setFillColor(colors.white); cv.setFont('HeadM', 8.5)
-        cv.drawString(M, H - 6 * mm, f"{paper} · {c.get('subject', '')}")
-        cv.setFont('HeadR', 8); cv.drawRightString(W - M, H - 6 * mm, c['topic_name'])
+        cv.setFillColor(colors.white)
+        room = W - 2 * M - 12; left = f"{paper} · {c.get('subject', '')}"
+        left_w = min(pdfmetrics.stringWidth(left, 'HeadM', 8.5), room * 0.4)          # a long subject and a long topic name must not overlap
+        cv.setFont('HeadM', 8.5); cv.drawString(M, H - 6 * mm, fit(left, 'HeadM', 8.5, left_w))
+        cv.setFont('HeadR', 8); cv.drawRightString(W - M, H - 6 * mm, fit(c['topic_name'], 'HeadR', 8, room - left_w))
         cv.setStrokeColor(LINE); cv.line(M, 14 * mm, W - M, 14 * mm)
-        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, footer_txt)
+        cv.setFont('Body', 7.5); cv.setFillColor(GREY)
+        cv.drawString(M, 10 * mm, fit(footer_txt, 'Body', 7.5, W / 2 - 45 - M) if c.get('contents', True) else footer_txt)
         cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}')
         if c.get('contents', True):                       # clickable link back to the contents page
             cv.setFont('HeadM', 7.5); cv.setFillColor(PURPLE); lab = 'Back to contents'

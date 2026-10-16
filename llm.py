@@ -65,7 +65,7 @@ CALLS = {'Claude': _claude, 'OpenAI': _openai, 'Gemini': _gemini}
 
 def parse_json(text):
     """Pull the JSON object out of a reply, tolerating code fences and a sentence before or after it."""
-    text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip()
+    text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip().replace('\\u0000', '')    # a NUL character cannot be stored in the database
     a, b = text.find('{'), text.rfind('}')
     if a < 0 or b < a: raise LLMError('the model did not return a JSON object')
     try: return json.loads(text[a:b + 1])

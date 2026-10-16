@@ -63,7 +63,8 @@ TEX_FIXES = {r'\land': r'\wedge', r'\lor': r'\vee', r'\lnot': r'\neg', r'\implie
 
 
 def normalize_tex(tex):
-    return re.sub(r'\\[A-Za-z]+', lambda m: TEX_FIXES.get(m.group(0), m.group(0)), tex)
+    tex = re.sub(r'\\[A-Za-z]+', lambda m: TEX_FIXES.get(m.group(0), m.group(0)), tex)
+    return re.sub(r'\\mathrm\{([^{}]*)\}', lambda m: '\\mathrm{' + m.group(1).replace(' ', '\\ ') + '}', tex)     # mathtext drops spaces inside \mathrm
 
 
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
@@ -82,21 +83,42 @@ def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
     return fn, w * 72 / 300, h * 72 / 300
 
 
+SYMBOLS = {r'\times': '×', r'\cdot': '·', r'\wedge': '∧', r'\vee': '∨', r'\neg': '¬', r'\leq': '≤', r'\geq': '≥', r'\neq': '≠', r'\Rightarrow': '⇒', r'\rightarrow': '→',
+           r'\to': '→', r'\pm': '±', r'\ldots': '…', r'\sum': 'Σ', r'\pi': 'π', r'\mu': 'µ', r'\Omega': 'Ω', r'\alpha': 'α', r'\beta': 'β', r'\theta': 'θ', r'\lambda': 'λ'}
+
+
+def tex_text(tex):
+    """Readable plain text for maths the renderer cannot draw, instead of showing raw LaTeX."""
+    t = normalize_tex(tex)
+    t = re.sub(r'\\(?:mathrm|text|textbf|mathbf|operatorname)\{([^{}]*)\}', r'\1', t)
+    t = re.sub(r'\\(?:begin|end)\{[^{}]*\}', '', t).replace('\\\\', '; ').replace('&', ' ')
+    t = re.sub(r'\\[A-Za-z]+', lambda m: SYMBOLS.get(m.group(0), ''), t)
+    return re.sub(r'\s+', ' ', t.replace('{', '').replace('}', '')).strip()
+
+
 def rich(text, size=10.5, color='#1F1A2E'):
     """**bold**, *italic*, $math$ -> reportlab markup."""
     out = []
-    for i, part in enumerate(re.split(r'(?<!\\)\$(.+?)(?<!\\)\$', text or '')):
+    for i, part in enumerate(re.split(r'(?<!\\)\$(.+?)(?<!\\)\$', text or '', flags=re.S)):
         if i % 2:
+            part = ' '.join(part.split())                        # maths written over several lines
             try:
                 fn, w, h = math_img(part, size, False, color)
                 out.append(f'<img src="{fn}" width="{w:.1f}" height="{h:.1f}" valign="{-h * 0.28:.1f}"/>')
             except Exception:
-                out.append(html.escape(part))
+                out.append(html.escape(tex_text(part)))
         else:
             t = html.escape(part.replace('\\$', '$'))
             t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t); t = re.sub(r'(?<!\*)\*(?!\*)(.+?)\*', r'<i>\1</i>', t)
             out.append(t.replace('\n', '<br/>'))
     return ''.join(out)
+
+
+def fit(text, font, size, width):
+    """text cut with an ellipsis so that it is at most `width` points wide."""
+    if pdfmetrics.stringWidth(text, font, size) <= width: return text
+    while text and pdfmetrics.stringWidth(text + '…', font, size) > width: text = text[:-1]
+    return text.rstrip() + '…'
 
 
 def P(text, style='body'): return Paragraph(rich(text), S[style])
@@ -193,7 +215,7 @@ def blocks(items, avail=None):
                 im = Image(fn, w, h); im.hAlign = 'CENTER'
                 out += [Spacer(1, 3), im, Spacer(1, 5)]
             except Exception:       # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
-                out.append(Paragraph(html.escape(b['latex']), S['mono']))
+                out.append(Paragraph(html.escape(tex_text(b['latex'])), S['body']))
         elif t == 'table':
             out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
         elif t == 'code':
@@ -214,7 +236,7 @@ def blocks(items, avail=None):
             for f in grp[:-1]: keep(f)      # inside a box, box() glues these to the next flowable (a KeepTogether cannot sit in a table cell)
             out += ([KeepTogether(grp)] if len(grp) > 1 and avail >= TW else grp) + [Spacer(1, 4)]
         elif t == 'example':
-            title = re.sub(r'^(worked example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
+            title = re.sub(r'^((worked )?example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
             inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(title) if title else ""}</font>', S['body']))]
             inner += text_or_blocks(b.get('problem'))
             inner.append(keep(Paragraph('<font name="HeadM" color="#4D2A87">Solution</font>', S['body'])))

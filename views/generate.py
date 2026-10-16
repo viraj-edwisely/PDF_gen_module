@@ -17,6 +17,7 @@ if book:
     units = db.sql('select * from units where book_id=%s order by start_page', (book['id'],))
     last = max(1, book['page_count'] - book['page_offset'])
     how = st.radio('Scope', ['Unit', 'Page range'] if units else ['Page range'], horizontal=True)
+    if not units: st.caption('No units were found for this book. To pick a unit here instead, add them to the book on the Library page.')
     if how == 'Unit':
         unit = st.selectbox('Unit', units, format_func=lambda u: f"{u['name']} (pages {u['start_page']}-{u['end_page']})")
         start, end = unit['start_page'], unit['end_page']

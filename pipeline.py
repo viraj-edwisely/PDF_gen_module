@@ -133,11 +133,28 @@ def block_errors(blocks, allowed, where):
     return errs
 
 
+BAD_TEX = re.compile(r'\\(begin|end|boxed|cancel|underbrace|overbrace|xrightarrow|xleftarrow|substack)\b|\\\\|&')
+
+
+def math_errors(x, where, key=None):
+    """Maths the renderer cannot draw: a $ without its partner, or LaTeX environments (cases, matrix, align) that mathtext lacks."""
+    if isinstance(x, dict):
+        if x.get('type') == 'code': return []                   # code may contain $
+        return [e for k, v in x.items() if k not in ('spec', 'kind') for e in math_errors(v, where, k)]
+    if isinstance(x, list): return [e for v in x for e in math_errors(v, where)]
+    if not isinstance(x, str): return []
+    if key == 'latex': return [f'{where}: a formula uses {BAD_TEX.search(x).group(0)!r}, which cannot be drawn; use separate formula blocks or a table'] if BAD_TEX.search(x) else []
+    parts = re.split(r'(?<!\\)\$', x)
+    if len(parts) % 2 == 0: return [f'{where}: unbalanced $ in "{x[:60]}": every math expression needs an opening and a closing $']
+    return [f'{where}: maths uses {BAD_TEX.search(m).group(0)!r}, which cannot be drawn; use separate formula blocks or a table' for m in parts[1::2] if BAD_TEX.search(m)]
+
+
 def notes_errors(expected):
     def check_notes(out):
         notes = out.get('notes') if isinstance(out, dict) else None
         if not isinstance(notes, list) or len(notes) != len(expected): return [f'"notes" must be a list of {len(expected)} sections']
-        return [e for n in notes for e in block_errors(n.get('blocks'), GATE_BLOCKS, n.get('heading', '?'))]
+        errs = [e for n in notes for e in block_errors(n.get('blocks'), GATE_BLOCKS, n.get('heading', '?')) + math_errors(n.get('blocks'), n.get('heading', '?'))]
+        return errs[:8]
     return check_notes
 
 
@@ -151,7 +168,12 @@ def questions_errors(paper):
     def check_questions(out):
         if not isinstance(out, dict): return ['the reply must be a JSON object']
         practice, sample = out.get('practice'), out.get('sample_paper')
-        errs = question_errors(paper, practice=practice) if isinstance(practice, list) else ['"practice" must be a list']
+        for i, q in enumerate(practice if isinstance(practice, list) else []):      # smaller models write "easy" or leave the level out
+            if not isinstance(q, dict): continue
+            lvl = str(q.get('level', '')).strip().capitalize()
+            q['level'] = lvl if lvl in ('Easy', 'Medium', 'Hard') else ('Easy', 'Medium', 'Hard')[i * 3 // len(practice)]    # the prompt orders practice from Easy to Hard
+        errs = math_errors([practice, sample, out.get('traps'), out.get('revision_card')], 'questions')[:6]
+        errs += question_errors(paper, practice=practice) if isinstance(practice, list) else ['"practice" must be a list']
         errs += question_errors(paper, sample=sample, prior_practice=practice) if isinstance(sample, dict) and isinstance(practice, list) else ['"sample_paper" must be an object']
         return errs + ([] if out.get('traps') and out.get('revision_card') else ['need "traps" and "revision_card"'])
     return check_questions
