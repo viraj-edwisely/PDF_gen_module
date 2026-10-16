@@ -45,6 +45,10 @@ def system_prompt(mode):
     return fill(read('nongate/system.md'), SCHEMA=read('nongate/content_schema.md'), FIGURES=read('figure_catalogue.md'), EXAMPLE=example)
 
 
+def log(run_id, rt_id, text):
+    db.sql('insert into logs (run_id, run_topic_id, text) values (%s,%s,%s)', (run_id, rt_id, text[:500]))
+
+
 class Job:
     """One run_topic being processed: saved steps, model calls with validation, warnings, progress, cost cap."""
 
@@ -57,11 +61,15 @@ class Job:
         status = db.sql('select status from runs where id=%s', (self.run['id'],))[0]['status']
         if status == 'cancelled': raise Cancelled()
 
+    def log(self, text): log(self.run['id'], self.rt['id'], text)
+
     def progress(self, text):
+        self.log(text)
         db.sql('update run_topics set step=%s where id=%s', (text, self.rt['id']))
         db.sql('update runs set heartbeat_at=now() where id=%s', (self.run['id'],))
 
     def warn(self, text):
+        self.log('⚠ ' + text)
         db.sql('update run_topics set warnings = warnings || to_jsonb(%s::text) where id=%s', (text, self.rt['id']))
 
     def saved(self, name):
@@ -81,6 +89,7 @@ class Job:
         self._guard()
         out = self.saved(name)
         if out is None:
+            self.log(f'{name}: working')
             out = fn()
             self.save(name, out, {'in': 0, 'out': 0, 'cost': 0})
         return out
@@ -89,7 +98,7 @@ class Job:
         """One model call as a saved step. If validate(output) lists problems, the model is asked again (twice at most)."""
         self._guard()
         out = self.saved(name)
-        if out is not None: return out
+        if out is not None: self.log(f'{name}: reused from an earlier attempt (no cost)'); return out
         if self.feedback: user += f'\n\nExtra instructions from the user for this PDF: {self.feedback}'
         total, problems, out = {'in': 0, 'out': 0, 'cost': 0.0}, [], None
         for _ in range(3):
@@ -97,13 +106,15 @@ class Job:
             try:
                 out, usage = llm.generate_json(self.provider, self.system, ask)
             except llm.LLMError as e:
-                problems, out = [str(e)], None; continue
+                self.log(f'{name}: model error, trying again: {e}'); problems, out = [str(e)], None; continue
             for k in total: total[k] += usage[k]
             problems = validate(out) if validate else []
             if not problems: break
+            self.log(f'{name}: the reply failed the checks, asking again: {problems[0]}')
         if out is None: raise llm.LLMError('; '.join(problems))
         if problems: self.warn(f'{name}: problems the model did not fix: ' + '; '.join(problems[:4]))
         self.save(name, out, total)
+        self.log(f'{name}: done ({total["in"]} tokens in, {total["out"]} out, ${total["cost"]:.3f})')
         return out
 
 
@@ -186,6 +197,7 @@ def render_and_store(job, mode, content):
     r = subprocess.run([sys.executable, os.path.join(RENDER, f'render_{mode}.py'), src, pdf], capture_output=True, text=True, timeout=600)
     if r.returncode: raise RuntimeError('PDF rendering failed: ' + r.stderr[-300:])
     base = f"{job.run['id']}/{job.rt['id']}"
+    job.log(f'PDF rendered ({os.path.getsize(pdf) // 1024} KB), uploading')
     db.upload('outputs', base + '.pdf', open(pdf, 'rb').read(), 'application/pdf')
     db.upload('outputs', base + '.json', json.dumps(content, ensure_ascii=False).encode('utf-8'), 'application/json')
     warns = db.sql('select warnings from run_topics where id=%s', (job.rt['id'],))[0]['warnings']
@@ -210,6 +222,7 @@ def pyq_step(job, topic, o):
         out = job.ask(f'pyq_{i}', fill(read('gate/pyq_extract.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], SOURCE=text[:120_000]))
         found += out.get('questions') or []
     kept, dropped = pyq.keep_verified(found, texts)
+    job.log(f'PYQs: {len(found)} found in {len(texts)} source(s), {len(kept)} verified, {len(dropped)} dropped')
     unique = {re.sub(r'\W+', '', q['question'].lower())[:80]: q for q in kept}
     kept = list(unique.values())[:8]
     if not kept: job.warn('No previous-year questions on this topic were found in the given sources. The PYQ section is left out.')
@@ -241,6 +254,7 @@ def gate(job):
         if book and not ctx['found']: job.warn('Topic not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
         return ctx
     ctx = job.step('context', context)
+    job.log('Book text found for this topic' if ctx['found'] else 'No book text used: the writer works from its own knowledge')
     book_text, note = (ctx['text'] if ctx['found'] else ''), book_note(ctx['found'])
     job.progress('Previous-year questions')
     pyqs = job.step('pyq', lambda: pyq_step(job, topic, o))

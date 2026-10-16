@@ -17,16 +17,19 @@ def create_run(mode, book_id, scope, provider, options, user):
     run = db.sql('insert into runs (mode, book_id, scope_start, scope_end, provider, model, options, cost_cap, created_by) values (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) returning id',
                  (mode, book_id, scope[0], scope[1], provider, PROVIDERS[provider]['model'], json.dumps(options), COST_CAP, user))[0]['id']
     db.many('insert into run_topics (run_id, name, position) values (%s,%s,%s)', [(run, n, i) for i, n in enumerate(names)])
+    pipeline.log(run, None, f'Run created by {user}: {len(names)} PDF(s), writer {provider} ({PROVIDERS[provider]["model"]})')
     return run
 
 
 def cancel_run(run_id):
+    pipeline.log(run_id, None, 'Cancel requested')
     db.sql("update runs set status='cancelled' where id=%s and status in ('queued', 'running')", (run_id,))
     db.sql("update run_topics set status='stopped', error='cancelled' where run_id=%s and status='queued'", (run_id,))
 
 
 def resume_run(run_id):
     """Re-queue unfinished topics (interrupted, stopped or failed). A run that hit its cap gets another cap's worth of budget."""
+    pipeline.log(run_id, None, 'Resume requested')
     db.sql("update run_topics set status='queued', error=null where run_id=%s and status in ('running', 'stopped', 'failed')", (run_id,))
     db.sql("update runs set status='queued', cost_cap = greatest(cost_cap, cost_usd + %s), heartbeat_at=now() where id=%s", (COST_CAP, run_id))
 
@@ -56,11 +59,14 @@ def _work_loop():
             rt = claimed[0]
             run = db.sql('select * from runs where id=%s', (rt['run_id'],))[0]
             db.sql("update runs set status='running', heartbeat_at=now() where id=%s and status='queued'", (run['id'],))
+            pipeline.log(run['id'], rt['id'], 'Started')
             with _heartbeat(run['id']):
-                try: pipeline.process(rt, run)
-                except pipeline.CapReached: _stop(run['id'], rt['id'], 'stopped', 'stopped: cost cap reached')
-                except pipeline.Cancelled: _stop(run['id'], rt['id'], 'cancelled', 'cancelled')
-                except Exception as e: db.sql("update run_topics set status='failed', error=%s where id=%s", (f'{type(e).__name__}: {e}'[:500], rt['id']))
+                try: pipeline.process(rt, run); pipeline.log(run['id'], rt['id'], 'Finished')
+                except pipeline.CapReached: _stop(run['id'], rt['id'], 'stopped', 'stopped: cost cap reached'); pipeline.log(run['id'], rt['id'], 'Stopped: cost cap reached')
+                except pipeline.Cancelled: _stop(run['id'], rt['id'], 'cancelled', 'cancelled'); pipeline.log(run['id'], rt['id'], 'Cancelled')
+                except Exception as e:
+                    db.sql("update run_topics set status='failed', error=%s where id=%s", (f'{type(e).__name__}: {e}'[:500], rt['id']))
+                    pipeline.log(run['id'], rt['id'], f'FAILED: {type(e).__name__}: {e}')
             if not db.sql("select 1 from run_topics where run_id=%s and status in ('queued', 'running')", (run['id'],)):
                 db.sql("update runs set status='done' where id=%s and status='running'", (run['id'],))
         except Exception:

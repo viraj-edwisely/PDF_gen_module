@@ -25,7 +25,23 @@ if book:
         start = c1.number_input('First page (printed page number)', 1, last, 1)
         end = c2.number_input('Last page', 1, last, last)
 default = book or {'paper': '', 'subject': ''}
-topics = list(dict.fromkeys(t.strip() for t in st.text_area('Topics (one per line)', height=140, help='GATE: one PDF per topic. Non-GATE: one module PDF covering all of them.').splitlines() if t.strip()))
+
+# topics: one input box each (GATE: each also takes its own PYQ sheet)
+st.subheader('Topics')
+st.caption('GATE: one PDF per topic. Non-GATE: one module PDF covering all of them.')
+ids = st.session_state.setdefault('topic_ids', [0])
+def add_topic(): st.session_state.topic_ids.append(max(st.session_state.topic_ids) + 1)
+def remove_topic(i): st.session_state.topic_ids.remove(i)
+names, sheets = [], {}
+for k, i in enumerate(ids, 1):
+    with st.container(border=True):
+        name = st.text_input(f'Topic {k}', key=f'topic{i}').strip()
+        sheet = st.file_uploader('PYQ sheet for this topic (optional, .xlsx)', type='xlsx', key=f'sheet{i}') if mode == 'gate' else None
+        if len(ids) > 1: st.button('Remove this topic', key=f'remove{i}', on_click=remove_topic, args=(i,))
+    if name and name not in names: names.append(name)
+    if name and sheet and name not in sheets: sheets[name] = sheet
+topics = names
+st.button('＋ Add a topic', on_click=add_topic, disabled=len(ids) >= MAX_TOPICS)
 
 options = {'topics': topics}
 if mode == 'gate':
@@ -34,7 +50,6 @@ if mode == 'gate':
     options['subject'] = c2.text_input('Subject', value=default['subject']).strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the model writes one if empty)').strip()
     options['urls'] = [u.strip() for u in st.text_area('Previous-year question sources: web page or PDF links, one per line (optional)', height=90).splitlines() if u.strip()]
-    workbook = st.file_uploader('Or a PYQ workbook (.xlsx from the PYQ extractor, optional)', type='xlsx')
 else:
     options['subject'] = st.text_input('Subject', value=default['subject']).strip()
     options['prompt'] = st.text_area('Your instructions (optional; empty uses the standard module template)', height=110).strip()
@@ -64,9 +79,9 @@ st.caption(f'Estimated cost: about ${estimate:.2f}. A run stops by itself at ${C
 for e in errors: st.error(e)
 
 if st.button('Generate', type='primary', disabled=bool(errors)):
-    if mode == 'gate' and workbook:
-        try: options['workbook'] = {t: pyq.workbook_questions(io.BytesIO(workbook.getvalue()), options['subject'], t) for t in topics}
-        except KeyError: st.error(f'The workbook has no sheet named "{options["subject"][:31]}".'); st.stop()
+    if mode == 'gate' and sheets:
+        try: options['workbook'] = {t: pyq.workbook_questions(io.BytesIO(f.getvalue()), options['subject'], t) for t, f in sheets.items()}
+        except KeyError as e: st.error(f'A PYQ sheet could not be read: {e}. It needs a sheet named "{options["subject"][:31]}" with the columns Question, Option1-4, Answer, field_type, Difficulty_level and Source.'); st.stop()
     run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), provider, options, user())
     st.success(f'Run {run_id} started.')
     st.page_link('views/runs.py', label='Open the Runs page to follow it', icon='📄')

@@ -35,8 +35,13 @@ create table if not exists steps (                 -- saved output of each pipel
   run_topic_id bigint references run_topics on delete cascade, name text, output jsonb,
   input_tokens int default 0, output_tokens int default 0, cost_usd numeric default 0, primary key (run_topic_id, name));
 
+create table if not exists logs (                  -- what happened during a run, shown on the Runs page
+  id bigserial primary key, run_id bigint references runs on delete cascade, run_topic_id bigint references run_topics on delete cascade,
+  at timestamptz default now(), text text);
+create index if not exists logs_run on logs (run_id, id);
+
 -- the app connects with its own database credentials; nothing is readable through Supabase's public API
 alter table books enable row level security;   alter table pages enable row level security;
 alter table units enable row level security;   alter table chunks enable row level security;
 alter table runs enable row level security;    alter table run_topics enable row level security;
-alter table steps enable row level security;
+alter table steps enable row level security;   alter table logs enable row level security;

@@ -1,11 +1,11 @@
 """Settings: providers, prices, limits and secrets. The only file to edit to change a model or a limit."""
 import os
 
-# One best-value model per provider. price = (USD per 1M input tokens, USD per 1M output tokens).
+# One model per provider (OpenAI and Gemini are on the cheaper tier while we compare quality). price = (USD per 1M input tokens, USD per 1M output tokens).
 PROVIDERS = {
     'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0)},
-    'OpenAI': {'model': 'gpt-6.1-sol', 'key': 'OPENAI_API_KEY', 'price': (2.0, 10.0)},
-    'Gemini': {'model': 'gemini-4-argon', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (4.0, 20.0)},  # Vertex AI. $2/$10 until 2026-11-30, then $4/$20 (confirm on the Vertex pricing page)
+    'OpenAI': {'model': 'gpt-4.1-mini', 'key': 'OPENAI_API_KEY', 'price': (0.40, 1.60)},
+    'Gemini': {'model': 'gemini-2.5-flash', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.30, 2.50)},  # Vertex AI (confirm the price and that 2.5 is not retired on Vertex)
 }
 EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # price per 1M tokens
 

@@ -50,7 +50,8 @@ def _gemini_client():
 def _gemini(model, system, user, max_tokens):
     from google import genai
     text, usage = '', (0, 0)
-    cfg = genai.types.GenerateContentConfig(system_instruction=system, response_mime_type='application/json', max_output_tokens=max_tokens)
+    cfg = genai.types.GenerateContentConfig(system_instruction=system, response_mime_type='application/json', max_output_tokens=max_tokens,
+                                          thinking_config=genai.types.ThinkingConfig(thinking_budget=8192))     # 2.5 models: thinking counts towards the output limit and the price
     for ch in _gemini_client().models.generate_content_stream(model=model, contents=user, config=cfg):
         text += ch.text or ''
         if ch.candidates and str(ch.candidates[0].finish_reason).endswith('MAX_TOKENS'): raise LLMError('Gemini output was cut off (token limit)')

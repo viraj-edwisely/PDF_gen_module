@@ -85,6 +85,10 @@ def show(run_id, was_active):
             db.sql('delete from runs where id=%s', (run_id,)); st.rerun()
     st.caption(f"{run['mode'].upper()} · {run['provider']} ({run['model']}) · started by {run['created_by']}")
     for t in topics: topic_card(run, t)
+    with st.expander('Log'):
+        rows = db.sql('select l.at, t.name, l.text from logs l left join run_topics t on t.id = l.run_topic_id where l.run_id=%s order by l.id desc limit 300', (run_id,))
+        st.code('\n'.join(f"{r['at']:%H:%M:%S}  " + (f"[{r['name'][:30]}] " if r['name'] else '') + r['text'] for r in rows) or 'Nothing logged yet.', language=None, wrap_lines=True)
+        st.caption('Newest first, times in UTC.')
 
 
 st.title('Runs')
