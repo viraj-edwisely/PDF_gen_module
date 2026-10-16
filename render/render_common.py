@@ -210,7 +210,8 @@ def blocks(items, avail=None):
             wd = b.get('width') or (1.0 if b.get('kind') in ('gantt', 'timeline') else None)
             grp = ([Paragraph(rich(b['title']), S['figtitle'])] if b.get('title') else []) + \
                   [image(fp, avail, width=wd, maxh=b.get('max_height_mm', 115) * mm)] + ([P(b['caption'], 'small')] if b.get('caption') else [])
-            out += [KeepTogether(grp) if len(grp) > 1 else grp[0], Spacer(1, 4)]
+            for f in grp[:-1]: keep(f)      # inside a box, box() glues these to the next flowable (a KeepTogether cannot sit in a table cell)
+            out += ([KeepTogether(grp)] if len(grp) > 1 and avail >= TW else grp) + [Spacer(1, 4)]
         elif t == 'example':
             inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(b["title"]) if b.get("title") else ""}</font>', S['body']))]
             inner += text_or_blocks(b.get('problem'))

@@ -44,7 +44,7 @@ def topic_card(run, t):
         for w in t['warnings']: st.warning(w)
         if not t['pdf_path']: return
         c1, c2, c3 = st.columns([1, 1, 2])
-        c1.download_button('Download PDF', fetch(t['pdf_path']), file_name=re.sub(r'\W+', '_', t['name']) + '.pdf', mime='application/pdf', key=f"pdf{t['id']}")
+        c1.download_button('⬇ Download PDF', fetch(t['pdf_path']), file_name=re.sub(r'\W+', '_', t['name']) + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary')
         c2.download_button('Download JSON', fetch(t['json_path']), file_name=re.sub(r'\W+', '_', t['name']) + '.json', key=f"json{t['id']}")
         if c3.toggle('Preview first pages', key=f"pv{t['id']}"):
             doc = pymupdf.open(stream=fetch(t['pdf_path']), filetype='pdf')

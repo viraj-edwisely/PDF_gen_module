@@ -48,7 +48,8 @@ for b in books:
             st.warning(b['error'] or 'Processing was interrupted.')
             if st.button('Process again', key=f"re{b['id']}"): process(b['id'], db.download('books', b['storage_path']))
         else:
-            offset = st.number_input('Page offset (PDF page = printed page + offset)', value=int(b['page_offset']), step=1, key=f"off{b['id']}")
+            offset = st.number_input('Extra pages before page 1 (advanced)', value=int(b['page_offset']), step=1, key=f"off{b['id']}",
+                                     help='Detected automatically. Change it only if a page range picks the wrong pages: enter how many PDF pages (cover, contents) come before the book\'s printed page 1.')
             units = pd.DataFrame(db.sql('select name, start_page, end_page from units where book_id=%s order by start_page', (b['id'],)), columns=['name', 'start_page', 'end_page'])
             st.caption('Units (printed page numbers). Edit, add or remove rows; with none, use page ranges when generating.')
             edited = st.data_editor(units, num_rows='dynamic', key=f"units{b['id']}", width='stretch')
