@@ -43,7 +43,7 @@ if st.session_state.get('subject_book') != (book and book['id']):          # a n
     for k in ('subject', 'paper'):
         if book or k not in st.session_state: st.session_state[k] = default[k] or ''
 
-# 3. topics: one row each (GATE: each also takes its own PYQ sheet)
+# 3. topics: one row each (GATE: each also takes its own PYQ source: PDF or Word files, or links)
 st.subheader('3 · Topics')
 st.caption('GATE: one PDF per topic. Non-GATE: one module PDF covering all of them.')
 ids = st.session_state.setdefault('topic_ids', [0])
@@ -78,14 +78,20 @@ with st.expander('Import topics from an Excel sheet'):
     pd.DataFrame({'Subject': ['Computer Organization and Architecture'] * 2, 'Topic': ['Addressing modes', 'Instruction formats']}).to_excel(template, index=False)
     c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
     if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
-names, sheets = [], {}
+names, sources = [], {}          # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions
 for k, i in enumerate(ids, 1):
-    cols = st.columns([5, 4, 1] if mode == 'gate' else [9, 1], vertical_alignment='bottom')
+    cols = st.columns([6, 3, 1] if mode == 'gate' else [9, 1], vertical_alignment='bottom')
     name = cols[0].text_input(f'Topic {k}', key=f'topic{i}', placeholder='e.g. Addressing modes and effective address').strip()
-    sheet = cols[1].file_uploader('PYQ sheet (optional, .xlsx)', type='xlsx', key=f'sheet{i}') if mode == 'gate' else None
+    kind = cols[1].segmented_control('PYQ source (optional)', ['PDF', 'Word', 'Links'], key=f'pyqkind{i}',
+                                     help='Previous-year GATE questions for this topic. Only questions whose exact text is found in the source are used.') if mode == 'gate' else None
     if len(ids) > 1: cols[-1].button('✕', key=f'remove{i}', on_click=remove_topic, args=(i,), help='Remove this topic')
+    got = []
+    if kind == 'Links':
+        got = [u.strip() for u in st.text_area(f'Links for topic {k} (web pages or PDFs, one per line)', key=f'pyqurls{i}', height=68).splitlines() if u.strip()]
+    elif kind:
+        got = st.file_uploader(f'{kind} file(s) for topic {k}', type='pdf' if kind == 'PDF' else 'docx', accept_multiple_files=True, key=f'pyqfile{i}')
     if name and name not in names: names.append(name)
-    if name and sheet and name not in sheets: sheets[name] = sheet
+    if name and got: sources.setdefault(name, (kind, got))
 topics = names
 st.button('＋ Add a topic', on_click=add_topic, disabled=len(ids) >= MAX_TOPICS)
 
@@ -97,10 +103,6 @@ if mode == 'gate':
     options['paper'] = c1.text_input('GATE paper code', key='paper', placeholder='CS').strip().upper()
     options['subject'] = c2.text_input('Subject', key='subject', placeholder='e.g. Computer Organization and Architecture').strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the writer writes one if empty)').strip()
-    with st.expander('Previous-year question sources (optional)'):
-        options['urls'] = [u.strip() for u in st.text_area('Web pages or PDF links with GATE previous-year questions, one per line', height=90).splitlines() if u.strip()]
-        st.caption('Questions are kept only if their exact text is found on the page. Attach a PYQ sheet per topic above for questions from your own bank '
-                   '(sheet named like the subject, columns Question, Option1-4, Answer, field_type, Difficulty_level, Source).')
     has_verifier = bool(secret(PROVIDERS[VERIFY_PROVIDER]['key']))
     options['verify'] = st.toggle('Double-check answers with a second model', value=True,
                                   help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example; disputed items go back to the writer once. Adds about $0.05-0.10 per PDF.")
@@ -129,8 +131,8 @@ if len(topics) > MAX_TOPICS: errors.append(f'At most {MAX_TOPICS} topics per run
 if book and start > end: errors.append('The first page is after the last page.')
 if mode == 'gate':
     if not options['paper']: errors.append('Enter the GATE paper code (for example CS).')
-    if len(options['urls']) > MAX_URLS: errors.append(f'At most {MAX_URLS} source links.')
-    if any(not u.startswith(('http://', 'https://')) for u in options['urls']): errors.append('Source links must start with http:// or https://')
+    if any(len(got) > MAX_URLS for _, got in sources.values()): errors.append(f'At most {MAX_URLS} PYQ links or files per topic.')
+    if any(kind == 'Links' and not u.startswith(('http://', 'https://')) for kind, got in sources.values() for u in got): errors.append('PYQ links must start with http:// or https://')
 if not options['subject']: errors.append('Enter the subject.')
 
 with st.container(border=True):
@@ -140,9 +142,9 @@ with st.container(border=True):
                 f"Estimated cost **about ${estimate:.2f}**, time **about {minutes} minutes**. A run stops by itself at ${COST_CAP:.0f}; finished PDFs are kept.")
     if errors: st.info('Still needed: ' + ' '.join(errors))
     if st.button('Generate', type='primary', disabled=bool(errors)):
-        if mode == 'gate' and sheets:
-            try: options['workbook'] = {t: pyq.workbook_questions(io.BytesIO(f.getvalue()), options['subject'], t) for t, f in sheets.items()}
-            except KeyError as e: st.error(f'A PYQ sheet could not be read: {e}. It needs a sheet named "{options["subject"][:31]}" with the columns Question, Option1-4, Answer, field_type, Difficulty_level and Source.'); st.stop()
+        try: options['pyq'] = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
+                               for t, (kind, got) in sources.items()}
+        except Exception as e: st.error(f'A PYQ file could not be read ({type(e).__name__}: {e}). Save it again as PDF or .docx and retry.'); st.stop()
         run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), provider, options, user())
         st.success(f'Run #{run_id} started.')
         st.page_link('views/runs.py', label='Open the Runs page to follow it', icon='📄')

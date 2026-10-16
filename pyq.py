@@ -1,7 +1,7 @@
-"""Previous-year questions: fetch the user's source pages, read the optional PYQ workbook, and verify what the model extracts.
+"""Previous-year questions: read the user's sources (web links, PDF or Word files) and verify what the model extracts.
 
-The model never invents a PYQ: a question is kept only if its text appears in the fetched page (or comes from the workbook)."""
-import ipaddress, re, socket
+The model never invents a PYQ: a question is kept only if its text appears in one of the sources."""
+import html, io, ipaddress, re, socket, zipfile
 from urllib.parse import urljoin, urlparse
 import pymupdf
 import requests
@@ -36,6 +36,14 @@ def fetch_text(url):
     raise ValueError(f'too many redirects: {url}')
 
 
+def file_text(name, data):
+    """Plain text of an uploaded PDF or Word (.docx) file."""
+    if name.lower().endswith('.pdf'): return '\n'.join(p.get_text() for p in pymupdf.open(stream=data, filetype='pdf'))
+    xml = zipfile.ZipFile(io.BytesIO(data)).read('word/document.xml').decode('utf-8')
+    xml = re.sub(r'<w:tab/>', ' ', re.sub(r'<w:br/>|</w:p>', '\n', xml))
+    return html.unescape(re.sub(r'<[^>]+>', '', xml))
+
+
 def _norm(s): return re.sub(r'[^a-z0-9]+', '', str(s).lower())
 
 
@@ -50,24 +58,3 @@ def keep_verified(questions, texts):
         elif not q.get('source'): dropped.append('no paper/year on the page: ' + str(q.get('question', ''))[:60])
         else: kept.append(q)
     return kept, dropped
-
-
-def workbook_questions(file, subject, topic, limit=12):
-    """Candidate PYQs from the gate-pyq-extractor workbook (an uploaded .xlsx), ranked by how many topic words they contain."""
-    import openpyxl
-    ws = openpyxl.load_workbook(file, read_only=True)[subject[:31]]
-    rows = list(ws.iter_rows(values_only=True)); col = {h: i for i, h in enumerate(rows[0])}
-    words = [w for w in re.findall(r'[a-z]{4,}', topic.lower())]
-    out = []
-    for r in rows[1:]:
-        opts = [r[col[f'Option{k}']] for k in range(1, 5)]
-        q = (r[col['Question']] or '').replace('\\\\', '\\')
-        hits = sum(len(re.findall(w, (q + ' ' + ' '.join(str(o or '') for o in opts)).lower())) for w in words)
-        if not hits: continue
-        numeric = r[col['field_type']] == 'Numerical'
-        ans = r[col['Answer']]
-        if numeric: ans = f"{r[col['Option1']]} to {r[col['Option2']]}" if r[col['Option1']] is not None else None
-        elif ans: ans = ', '.join('ABCD'[int(x) - 1] for x in str(ans).split(','))
-        out.append({'source': r[col['Source']], 'qtype': 'NAT' if numeric else r[col['field_type']], 'marks': 1 if r[col['Difficulty_level']] == 1 else 2,
-                    'question': re.sub(r'\n\[Figure[^\]]*\]', '', q), 'options': None if numeric else [o for o in opts if o], 'answer': ans, 'hits': hits})
-    return sorted([q for q in out if q['answer']], key=lambda q: -q['hits'])[:limit]

@@ -206,14 +206,13 @@ def render_and_store(job, mode, content):
 
 # ---------------------------------------------------------------- GATE
 def pyq_step(job, topic, o):
-    """Previous-year questions from the user's URLs and optional workbook; only those found verbatim in the source are kept."""
-    texts = []
-    for url in o.get('urls') or []:
+    """Previous-year questions from this topic's sources (links, or text read from uploaded PDF/Word files on the Generate page);
+    only those found verbatim in a source are kept."""
+    src = (o.get('pyq') or {}).get(topic) or {}
+    texts = list(src.get('texts') or [])
+    for url in src.get('urls') or []:
         try: texts.append(pyq.fetch_text(url))
         except Exception as e: job.warn(f'PYQ source could not be read ({url}): {e}')
-    workbook = (o.get('workbook') or {}).get(topic)
-    if workbook:
-        texts.append('\n\n'.join(f"[{q['source']}] [{q['qtype']}, {q['marks']} mark(s)]\n{q['question']}\n" + ''.join(f'({"ABCD"[i]}) {x}\n' for i, x in enumerate(q.get('options') or [])) + f"Answer: {q['answer']}" for q in workbook))
     if not texts: return []
     prompts = [fill(read('gate/pyq_extract.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], SOURCE=text[:120_000]) for text in texts]
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:

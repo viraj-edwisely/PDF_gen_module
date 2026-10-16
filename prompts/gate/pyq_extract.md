@@ -1,4 +1,4 @@
-Below are web pages (or an official question bank) that may contain previous-year GATE questions. Find the questions that test this topic: "{{TOPIC}}" ({{PAPER}} · {{SUBJECT}}).
+Below is a source (a web page, or the text of a PDF or Word file) that may contain previous-year GATE questions. Find the questions that test this topic: "{{TOPIC}}" ({{PAPER}} · {{SUBJECT}}).
 
 <source>
 {{SOURCE}}

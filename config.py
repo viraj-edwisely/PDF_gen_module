@@ -11,7 +11,7 @@ EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # p
 
 COST_CAP = 5.0            # USD per run; the run stops cleanly when reached
 MAX_TOPICS = 20           # per run
-MAX_URLS = 10             # PYQ source URLs per run
+MAX_URLS = 10             # PYQ source links or files per topic
 MAX_BOOK_MB, MAX_PAGES = 100, 1500
 WORKERS = 4               # PDFs (and book uploads) processed at the same time, across all runs
 TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time
