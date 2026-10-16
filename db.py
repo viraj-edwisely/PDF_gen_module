@@ -1,5 +1,6 @@
 """Database (direct Postgres connection to Supabase) and file storage (Supabase Storage)."""
 import functools, os
+from urllib.parse import quote, unquote
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from config import secret
@@ -7,10 +8,18 @@ from config import secret
 BUCKETS = ('books', 'outputs')
 
 
+def _dsn():
+    """DATABASE_URL with the password encoded, so a password containing @ / # ? : still works."""
+    scheme, rest = secret('DATABASE_URL').strip().split('://', 1)
+    userinfo, host = rest.rsplit('@', 1)                       # the last @ separates the password from the host
+    user, password = userinfo.split(':', 1)
+    return f'{scheme}://{user}:{quote(unquote(password), safe="")}@{host}'
+
+
 @functools.cache
 def _pool():
     # prepare_threshold=None: Supabase's pooler (transaction mode) does not support prepared statements
-    return ConnectionPool(secret('DATABASE_URL'), min_size=1, max_size=8, open=True,
+    return ConnectionPool(_dsn(), min_size=1, max_size=8, open=True,
                           kwargs={'autocommit': True, 'row_factory': dict_row, 'prepare_threshold': None})
 
 
