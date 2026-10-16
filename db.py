@@ -1,5 +1,5 @@
 """Database (direct Postgres connection to Supabase) and file storage (Supabase Storage)."""
-import functools, os
+import functools, os, re
 from urllib.parse import quote, unquote
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -39,7 +39,8 @@ def many(query, rows):
 @functools.cache
 def _storage():
     from supabase import create_client
-    return create_client(secret('SUPABASE_URL'), secret('SUPABASE_KEY')).storage
+    url = re.sub(r'/(rest|storage|auth)/v1.*$', '', secret('SUPABASE_URL').strip().rstrip('/'))   # accept the Data API address too
+    return create_client(url, secret('SUPABASE_KEY').strip()).storage
 
 
 def upload(bucket, path, data, content_type='application/octet-stream'):

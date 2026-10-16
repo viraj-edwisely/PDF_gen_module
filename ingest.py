@@ -1,6 +1,6 @@
 """Book ingest: PDF -> page text, units, chunks with embeddings. Called from the Library page."""
 import collections, re
-import fitz
+import pymupdf
 import db
 from config import MAX_PAGES
 from llm import embed
@@ -57,7 +57,7 @@ def vec(v): return '[' + ','.join(f'{x:.6f}' for x in v) + ']'
 def ingest(book_id, pdf_bytes, progress=lambda f, msg: None):
     """Fill pages, units and chunks for a book. Sets books.status to ready or failed."""
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+        doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
         if len(doc) > MAX_PAGES: raise ValueError(f'{len(doc)} pages; the limit is {MAX_PAGES}')
         progress(0.05, 'Reading pages')
         pages, offset = extract_pages(doc)

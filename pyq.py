@@ -3,7 +3,7 @@
 The model never invents a PYQ: a question is kept only if its text appears in the fetched page (or comes from the workbook)."""
 import ipaddress, re, socket
 from urllib.parse import urljoin, urlparse
-import fitz
+import pymupdf
 import requests
 from bs4 import BeautifulSoup
 
@@ -29,7 +29,7 @@ def fetch_text(url):
         r.raise_for_status()
         data = r.raw.read(MAX_BYTES, decode_content=True)
         kind = r.headers.get('content-type', '').lower()
-        if 'pdf' in kind: return '\n'.join(p.get_text() for p in fitz.open(stream=data, filetype='pdf'))
+        if 'pdf' in kind: return '\n'.join(p.get_text() for p in pymupdf.open(stream=data, filetype='pdf'))
         if 'html' in kind: return BeautifulSoup(data, 'html.parser').get_text('\n')
         if 'text' in kind: return data.decode('utf-8', 'replace')
         raise ValueError(f'unsupported content type {kind!r}: {url}')

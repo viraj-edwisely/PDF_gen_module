@@ -1,6 +1,6 @@
 """Runs page: progress of every run, warnings, previews, downloads, regenerate, resume and cancel."""
 import io, json, re, zipfile
-import fitz
+import pymupdf
 import openpyxl
 import streamlit as st
 import db, jobs, pipeline
@@ -47,7 +47,7 @@ def topic_card(run, t):
         c1.download_button('Download PDF', fetch(t['pdf_path']), file_name=re.sub(r'\W+', '_', t['name']) + '.pdf', mime='application/pdf', key=f"pdf{t['id']}")
         c2.download_button('Download JSON', fetch(t['json_path']), file_name=re.sub(r'\W+', '_', t['name']) + '.json', key=f"json{t['id']}")
         if c3.toggle('Preview first pages', key=f"pv{t['id']}"):
-            doc = fitz.open(stream=fetch(t['pdf_path']), filetype='pdf')
+            doc = pymupdf.open(stream=fetch(t['pdf_path']), filetype='pdf')
             st.image([p.get_pixmap(dpi=60).tobytes('png') for p in list(doc)[:3]], width=260)
         with st.expander('Change this PDF'):
             feedback = st.text_area('Regenerate with feedback (runs the model again and costs money)', key=f"fb{t['id']}", placeholder='e.g. more worked examples, simpler language')
