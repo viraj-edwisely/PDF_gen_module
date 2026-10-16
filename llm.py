@@ -4,7 +4,7 @@ Providers are asked for a single JSON object; we tidy and check it ourselves (co
 because the providers' schema dialects do not fit our content JSON. The SDKs retry rate limits and 5xx errors themselves.
 The system prompt is the same for every call of a run, so it is sent first and cached where the provider supports it.
 """
-import json, re
+import functools, json, re
 from config import PROVIDERS, cost, secret
 
 
@@ -40,8 +40,10 @@ def _openai(model, system, user, max_tokens):
     return (text,) + usage
 
 
+@functools.cache
 def _gemini_client():
-    """Gemini through Vertex AI, signed in with the service-account JSON (no API key)."""
+    """Gemini through Vertex AI, signed in with the service-account JSON (no API key). Made once and kept:
+    the library closes its connection when a client is garbage-collected, which breaks a stream still being read."""
     from google import genai
     from google.oauth2 import service_account
     info = secret('GOOGLE_SERVICE_ACCOUNT_JSON')
