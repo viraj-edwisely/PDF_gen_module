@@ -10,6 +10,7 @@ FOUND_SIM = 0.30   # best cosine similarity below this: the topic is not in this
 def topic_context(book, start, end, topic):
     """book: a books row; start/end: printed pages. Returns {'text', 'found', 'whole_scope'}.
     A small scope is sent whole in page order; a larger one is searched (vector + keyword, fused) down to a budget."""
+    if not book: return {'text': '', 'found': False, 'whole_scope': False}      # runs without a book
     off, bid = book['page_offset'], book['id']
     a, b = start + off, end + off
     scope = 'book_id=%s and page_start between %s and %s'

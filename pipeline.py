@@ -154,7 +154,13 @@ def topics_errors(out, group):
 
 # ---------------------------------------------------------------- shared steps
 def book_note(found):
-    return 'Book material for this topic follows.' if found else 'The book has NO material on this topic in the chosen scope: write it from your own knowledge.'
+    return 'Book material for this topic follows.' if found else 'No book material is available for this topic: write it from your own knowledge.'
+
+
+def run_book(run):
+    """The run's book row, or None when it was started without a book (or the book was deleted since)."""
+    rows = db.sql('select * from books where id=%s', (run['book_id'],)) if run['book_id'] else []
+    return rows[0] if rows else None
 
 
 def figure_failures(content):
@@ -228,11 +234,11 @@ def repair(job, content, errors, rnd):
 def gate(job):
     run, rt = job.run, job.rt
     o, topic = run['options'], rt['name']
-    book = db.sql('select * from books where id=%s', (run['book_id'],))[0]
-    job.progress('Reading the book')
+    book = run_book(run)
+    job.progress('Reading the book' if book else 'Starting')
     def context():
         ctx = retrieve.topic_context(book, run['scope_start'], run['scope_end'], topic)
-        if not ctx['found']: job.warn('Topic not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
+        if book and not ctx['found']: job.warn('Topic not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
         return ctx
     ctx = job.step('context', context)
     book_text, note = (ctx['text'] if ctx['found'] else ''), book_note(ctx['found'])
@@ -286,13 +292,13 @@ def gate(job):
 def nongate(job):
     run, rt = job.run, job.rt
     o, names = run['options'], run['options']['topics']
-    book = db.sql('select * from books where id=%s', (run['book_id'],))[0]
+    book = run_book(run)
     user_prompt = o.get('prompt') or ''
-    job.progress('Reading the book')
+    job.progress('Reading the book' if book else 'Starting')
     def context():
         ctxs = [retrieve.topic_context(book, run['scope_start'], run['scope_end'], t) for t in names]
         for t, c in zip(names, ctxs):
-            if not c['found']: job.warn(f'Topic "{t}" not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
+            if book and not c['found']: job.warn(f'Topic "{t}" not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
         whole = ctxs[0]['text'] if all(c['whole_scope'] for c in ctxs) else None
         return {'whole': whole, 'per_topic': [c['text'] if c['found'] else '' for c in ctxs], 'found': [c['found'] for c in ctxs]}
     ctx = job.step('context', context)

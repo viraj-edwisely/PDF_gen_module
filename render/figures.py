@@ -22,7 +22,7 @@ Kinds (spec fields are documented in references/figure_catalogue.md, with subjec
 CLI:  python3 figures.py <kind> spec.json out.png      (quick look at one figure)
       python3 figures.py --gallery out_dir             (renders one sample of every kind)
 """
-import ast, hashlib, json, os, shutil, subprocess, sys, tempfile
+import ast, hashlib, json, os, shutil, subprocess, sys, tempfile, textwrap
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -94,7 +94,7 @@ def gantt(spec, out):
     tmax = max(s[2] for r in rows for s in r['segments']); tmin = min(s[1] for r in rows for s in r['segments'])
     rh = spec.get('height', 0.5)
     gap = 0.0 if left else 0.38
-    fig_h = len(rows) * (rh + 0.42) + (len(rows) - 1) * 0.2 + (0.3 * len(rows) if any(r.get('title') for r in rows) and not left else 0)
+    fig_h = len(rows) * (rh + 0.62) + (len(rows) - 1) * 0.2 + (0.3 * len(rows) if any(r.get('title') for r in rows) and not left else 0)
     fig, ax = plt.subplots(figsize=(spec.get('width', 7.2), fig_h))
     y = 0; yt = []
     for r in reversed(rows):
@@ -114,8 +114,11 @@ def gantt(spec, out):
             ticks.update([a, b])
         if spec.get('ticks', 'auto') != 'none':
             tl = spec['ticks'] if isinstance(spec.get('ticks'), list) else sorted(ticks)
+            last = [-1e18, -1e18]
             for t in tl:
-                ax.text(t, y - rh / 2 - 0.12, _fmt(t), ha='center', va='top', fontsize=7.5, color=INK)
+                lvl = 0 if t - last[0] >= 0.055 * (tmax - tmin) else 1 if t - last[1] >= 0.055 * (tmax - tmin) else 0
+                last[lvl] = t
+                ax.text(t, y - rh / 2 - 0.12 - 0.2 * lvl, _fmt(t), ha='center', va='top', fontsize=7.5, color=INK)
         if r.get('title'):
             if left: yt.append((y, r['title']))
             else: ax.text(tmin, y + rh / 2 + 0.1, r['title'], ha='left', va='bottom', fontsize=9, color=PURPLE, fontweight='bold')
@@ -123,7 +126,7 @@ def gantt(spec, out):
     ax.set_xlim(tmin - (tmax - tmin) * 0.01, tmax + (tmax - tmin) * 0.02)
     has_t = any(r.get('title') for r in rows) and not left
     top_c = y - rh - 0.62 - (0 if left else 0.22)          # centre of the top bar
-    ax.set_ylim(-rh / 2 - 0.42, top_c + rh / 2 + (0.36 if has_t else 0.03))
+    ax.set_ylim(-rh / 2 - 0.62, top_c + rh / 2 + (0.36 if has_t else 0.03))
     ax.axis('off')
     if left:
         for yy, t in yt: ax.text(tmin - (tmax - tmin) * 0.015, yy, t, ha='right', va='center', fontsize=8.5, color=PURPLE, fontweight='bold')
@@ -263,18 +266,26 @@ def graph(spec, out):
     _install_fonts()
     directed = spec.get('directed', True); arrow = '->' if directed else '--'
     ds = spec.get('node_shape', 'circle')
+    labels = [str((n.get('label', n['id']) if isinstance(n, dict) else n)) for n in spec.get('nodes', [])]
+    fixed = ds in ('circle', 'doublecircle') and not spec.get('autosize') and all(len(x) <= 4 for x in labels)
+    if ds in ('circle', 'doublecircle') and not fixed: ds = 'box'           # circles stay for short state names; long labels sit in compact rounded boxes
+    node_style = 'filled,rounded' if ds == 'box' else 'filled'
     L = [('digraph' if directed else 'graph') + ' G {',
          f'graph [rankdir={spec.get("rankdir", "TB")}, bgcolor=transparent, pad=0.15, nodesep={spec.get("nodesep", 0.35)}, '
          f'ranksep={spec.get("ranksep", 0.45)}, size="{spec.get("size", "7,4")}", dpi={DPI}, fontname="Poppins"];',
-         f'node [shape={ds}, style="filled", fillcolor="{LAV}", color="{PURPLE}", penwidth=1.4, fontname="Poppins Medium", '
-         f'fontsize=11, fontcolor="{INK}", width=0.42, height=0.42, fixedsize={"true" if ds in ("circle", "doublecircle") and not spec.get("autosize") else "false"}];',
+         f'node [shape={ds}, style="{node_style}", fillcolor="{LAV}", color="{PURPLE}", penwidth=1.4, fontname="Poppins Medium", '
+         f'fontsize=11, fontcolor="{INK}", width=0.42, height=0.42, fixedsize={"true" if fixed else "false"}, margin="0.1,0.05"];',
          f'edge [color="{GREY}", penwidth=1.2, fontname="Poppins", fontsize=10, fontcolor="{INK}", arrowsize=0.7];']
     q = lambda s: '"' + str(s).replace('"', '\\"') + '"'
     for n in spec.get('nodes', []):
         n = n if isinstance(n, dict) else {'id': n}
         a = []
-        if 'label' in n: a.append(f'label={q(n["label"])}')
-        if n.get('shape'): a.append(f'shape={n["shape"]}')
+        if 'label' in n:
+            lab = str(n['label']) if n.get('shape') == 'record' else '\\n'.join(textwrap.wrap(str(n['label']), 16) or [''])    # long labels wrap onto several lines
+            a.append(f'label={q(lab)}')
+        if n.get('shape'):
+            if n['shape'] in ('circle', 'doublecircle') and len(str(n.get('label', n['id']))) > 4: n = dict(n, shape='box')
+            a.append(f'shape={n["shape"]}')
         if n.get('shape') in ('box', 'record', 'plaintext', 'ellipse', 'diamond'): a.append('fixedsize=false'); a.append('style="filled,rounded"' if n['shape'] == 'box' else 'style=filled')
         if n.get('shape') == 'plaintext': a.append('fillcolor=white, color=white')
         f = n.get('fill')
@@ -317,7 +328,10 @@ def cells(spec, out):
     brand()
     rows = spec['rows']; cw, ch = spec.get('cell_w', 0.55), spec.get('cell_h', 0.42)
     ncol = max(len(r['cells']) for r in rows)
-    lab_w = 1.1 if any(r.get('label') for r in rows) else 0.05
+    longest = max([len(_fmt((c if isinstance(c, dict) else {'text': c}).get('text', '') or '')) for r in rows for c in r['cells']] + [1])
+    need = 0.09 * longest + 0.12                       # width the longest cell text needs at 9 pt
+    cw = max(cw, min(need, 1.3)); fs = 9 * min(1.0, (cw - 0.12) / (0.09 * longest))
+    lab_w = max(1.1, 0.09 * max(len(str(r.get('label', ''))) for r in rows) + 0.2) if any(r.get('label') for r in rows) else 0.05
     fig = plt.figure(figsize=(lab_w + ncol * cw + 0.2, len(rows) * (ch + 0.12) + 0.45))
     ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(-lab_w, ncol * cw + 0.1); ax.set_ylim(-0.1, len(rows) * (ch + 0.12) + 0.35); ax.axis('off')
     idx = spec.get('index')
@@ -334,7 +348,7 @@ def cells(spec, out):
             fc = col(c.get('fill'), LAV) if c.get('fill') else ('white' if c.get('empty') else LAV)
             ax.add_patch(plt.Rectangle((j * cw, y), cw, ch, facecolor=fc, edgecolor=PURPLE, lw=1.1))
             tc = 'white' if fc in (PURPLE, '#7B5CB8', '#2E8B87') else INK
-            ax.text(j * cw + cw / 2, y + ch / 2, _fmt(c.get('text', '')), ha='center', va='center', fontsize=9, color=tc)
+            ax.text(j * cw + cw / 2, y + ch / 2, _fmt(c.get('text', '')), ha='center', va='center', fontsize=fs, color=tc)
             if c.get('note'): ax.text(j * cw + cw / 2, y - 0.02, c['note'], ha='center', va='top', fontsize=6.5, color=GREY)
     for a in spec.get('arrows', []):
         i, j = a['row'], a['cell']; y = top - (i + 1) * (ch + 0.12) + 0.06

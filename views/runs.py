@@ -51,7 +51,7 @@ def topic_card(run, t):
             st.image([p.get_pixmap(dpi=60).tobytes('png') for p in list(doc)[:3]], width=260)
         with st.expander('Change this PDF'):
             feedback = st.text_area('Regenerate with feedback (runs the model again and costs money)', key=f"fb{t['id']}", placeholder='e.g. more worked examples, simpler language')
-            if st.button('Regenerate', key=f"rg{t['id']}", disabled=not (feedback and run['book_id'])):
+            if st.button('Regenerate', key=f"rg{t['id']}", disabled=not feedback):
                 options = dict(run['options'], feedback=feedback)
                 if run['mode'] == 'gate': options['topics'] = [t['name']]
                 new = jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), run['provider'], options, user())

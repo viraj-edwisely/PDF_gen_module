@@ -39,11 +39,11 @@ S = {
     'sub': ParagraphStyle('s', fontName='HeadR', fontSize=11.5, leading=15, textColor=colors.white),
     'h1': ParagraphStyle('h1', fontName='Head', fontSize=17, leading=22, textColor=PURPLE, spaceBefore=10, spaceAfter=6),
     'h2': ParagraphStyle('h2', fontName='Head', fontSize=12.5, leading=16, textColor=INK, spaceBefore=8, spaceAfter=4),
-    'body': ParagraphStyle('b', fontName='Body', fontSize=9.6, leading=14, textColor=INK, spaceAfter=5),
+    'body': ParagraphStyle('b', fontName='Body', fontSize=9.6, leading=14, textColor=INK, spaceAfter=5, autoLeading='max'),
     'small': ParagraphStyle('sm', fontName='Body', fontSize=8, leading=11, textColor=GREY),
     'cell': ParagraphStyle('c', fontName='Body', fontSize=8.8, leading=12, textColor=INK),
     'cellh': ParagraphStyle('ch', fontName='HeadM', fontSize=8.8, leading=12, textColor=colors.white),
-    'callout': ParagraphStyle('co', fontName='Body', fontSize=9.6, leading=14, textColor=colors.white),
+    'callout': ParagraphStyle('co', fontName='Body', fontSize=9.6, leading=14, textColor=colors.white, autoLeading='max'),
     'tag': ParagraphStyle('tg', fontName='HeadM', fontSize=7.8, leading=10, textColor=INK),
     'mono': ParagraphStyle('m', fontName='Mono', fontSize=8.4, leading=11.5, textColor=INK),
     'subhead': ParagraphStyle('sh', fontName='BodyB', fontSize=9.6, leading=14, textColor=INK, spaceBefore=2, spaceAfter=3),
@@ -116,7 +116,7 @@ def styled_table(header, rows, widths=None, total_row=False, avail=None):
     for i, r in enumerate(rows):
         st_ = S['cellb'] if total_row and i == len(rows) - 1 else S['cell']
         body.append([Paragraph(rich('' if c is None else str(c)), st_) for c in r])
-    data = [[Paragraph(rich(h), S['cellh']) for h in header]] + body
+    data = [[Paragraph(rich(h, color='#FFFFFF'), S['cellh']) for h in header]] + body
     t = Table(data, colWidths=widths, repeatRows=1)
     st = [('BACKGROUND', (0, 0), (-1, 0), PURPLE), ('GRID', (0, 0), (-1, -1), 0.5, LINE),
           ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
@@ -126,7 +126,7 @@ def styled_table(header, rows, widths=None, total_row=False, avail=None):
     t.setStyle(TableStyle(st)); return t
 
 
-def box(flows, bg=LAV, bar=PURPLE, pad=8):
+def box(flows, bg=LAV, bar=PURPLE, pad=8, width=TW):
     """Coloured box with a left bar. One flowable per row, so long worked examples split across pages."""
     flows = [f for f in flows if f is not None] or [Spacer(1, 1)]
     rows, k = [], 0
@@ -134,7 +134,7 @@ def box(flows, bg=LAV, bar=PURPLE, pad=8):
         cell = [flows[k]]
         while getattr(flows[k], '_keep_next', False) and k + 1 < len(flows): k += 1; cell.append(flows[k])
         rows.append([cell if len(cell) > 1 else cell[0]]); k += 1
-    t = Table(rows, colWidths=[TW])
+    t = Table(rows, colWidths=[width])
     t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), bg), ('LINEBEFORE', (0, 0), (0, -1), 3, bar),
                            ('LEFTPADDING', (0, 0), (-1, -1), pad + 2), ('RIGHTPADDING', (0, 0), (-1, -1), pad),
                            ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
@@ -197,14 +197,15 @@ def blocks(items, avail=None):
         elif t == 'table':
             out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
         elif t == 'code':
-            out.append(box([Preformatted(b['text'], S['mono'])], bg=colors.HexColor('#F7F5FC'), bar=LINE)); out.append(Spacer(1, 6))
+            chars = int((avail - 24) / (S['mono'].fontSize * 0.602))      # long lines are wrapped instead of running out of the box
+            out += [box([Preformatted(b['text'], S['mono'], maxLineLength=chars, splitChars=' ')], bg=colors.HexColor('#F7F5FC'), bar=LINE, width=avail), Spacer(1, 6)]
         elif t == 'callout':
-            out += [box([Paragraph(rich(b['text'], color='#FFFFFF'), S['callout'])], bg=PURPLE, bar=YEL), Spacer(1, 6)]
+            out += [box([Paragraph(rich(b['text'], color='#FFFFFF'), S['callout'])], bg=PURPLE, bar=YEL, width=avail), Spacer(1, 6)]
         elif t in ('note', 'trap'):
             title = b.get('title', 'Common GATE trap' if t == 'trap' else None)
             inner = ([keep(Paragraph(html.escape(title), S['boxtitle']))] if title else []) + \
                     ([P(x) for x in b['text'].split('\n\n')] if b.get('text') else []) + blocks(b.get('blocks', []), INNER)
-            out += [box(inner), Spacer(1, 6)]
+            out += [box(inner, width=avail), Spacer(1, 6)]
         elif t in ('image', 'figure'):
             fp = figure_path(b)
             wd = b.get('width') or (1.0 if b.get('kind') in ('gantt', 'timeline') else None)
@@ -213,11 +214,12 @@ def blocks(items, avail=None):
             for f in grp[:-1]: keep(f)      # inside a box, box() glues these to the next flowable (a KeepTogether cannot sit in a table cell)
             out += ([KeepTogether(grp)] if len(grp) > 1 and avail >= TW else grp) + [Spacer(1, 4)]
         elif t == 'example':
-            inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(b["title"]) if b.get("title") else ""}</font>', S['body']))]
+            title = re.sub(r'^(worked example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
+            inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(title) if title else ""}</font>', S['body']))]
             inner += text_or_blocks(b.get('problem'))
             inner.append(keep(Paragraph('<font name="HeadM" color="#4D2A87">Solution</font>', S['body'])))
             inner += text_or_blocks(b.get('solution'))
-            out += [box(inner), Spacer(1, 8)]
+            out += [box(inner, width=avail), Spacer(1, 8)]
         elif t == 'spacer': out.append(Spacer(1, b.get('height', 6)))
         elif t == 'pagebreak': out.append(PageBreak())
         else: raise ValueError(f'unknown block type {t!r}')

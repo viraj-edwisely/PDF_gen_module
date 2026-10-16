@@ -56,10 +56,10 @@ def main():
     logo_w = LOGO_WHITE
 
     def first(cv, doc):
-        cv.saveState(); band = 84 * mm
+        cv.saveState()
         cv.setFillColor(PURPLE); cv.rect(0, H - band, W, band, stroke=0, fill=1)
         lw = 34 * mm; cv.drawImage(logo_w, M, H - 19 * mm, lw, lw * 262 / 644, mask='auto')
-        cv.setFillColor(YEL); cv.rect(M, H - band + 12 * mm, 26 * mm, 2.2 * mm, stroke=0, fill=1)
+        cv.setFillColor(YEL); cv.rect(M, H - band + 5 * mm, 26 * mm, 2.2 * mm, stroke=0, fill=1)
         cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, 'Edwisely · ' + footer_txt)
         cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}'); cv.restoreState()
 
@@ -90,7 +90,9 @@ def main():
     kick = f"{paper} · {c.get('subject', '').upper()}"
     head = [Paragraph(html.escape(kick), S['kicker']), Spacer(1, 6), Paragraph(rich(c['topic_name'], color='#FFFFFF'), S['title']),
             Spacer(1, 6), Paragraph(rich(c.get('subtitle', 'Topic guide: concept notes, worked examples, previous-year GATE questions, practice and sample paper'), color='#FFFFFF'), S['sub'])]
-    ht = Table([[head]], colWidths=[W - 2 * M], rowHeights=[60 * mm])
+    head_h = max(60 * mm, sum(p.wrap(W - 2 * M, 0)[1] for p in head if isinstance(p, Paragraph)) + 6 + 4 + 6)     # a long title or subtitle makes the purple band taller
+    band = 20 * mm + head_h + 4 * mm
+    ht = Table([[head]], colWidths=[W - 2 * M], rowHeights=[head_h])
     ht.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 4)]))
     story += [ht, Spacer(1, 10 * mm)]
     def walk(bs):
