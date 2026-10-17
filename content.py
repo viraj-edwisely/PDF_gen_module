@@ -9,7 +9,7 @@ A problem is (path, message, hard):
 - hard=True          the item is broken and is dropped if the repair does not fix it;
 - hard=False         a requirement (a missing worked example or figure, a wrong answer check): kept, with a warning.
 """
-import json, os, re, subprocess, sys, tempfile
+import difflib, json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = os.path.join(HERE, 'render')
@@ -248,6 +248,20 @@ def gate_notes(out):
     return out
 
 
+def align_notes(out, sections):
+    """One note per planned section, in the plan's order, matched by heading (by position when only the headings differ).
+    A section the model left out comes back with no blocks, so the repair writes just that one."""
+    key = lambda s: re.sub(r'[^a-z0-9]+', ' ', str(s).lower()).strip()
+    notes, aligned, used = out['notes'], [], set()
+    for i, s in enumerate(sections):
+        free = {key(n['heading']): j for j, n in enumerate(notes) if j not in used and n['heading']}
+        close = difflib.get_close_matches(key(s['heading']), list(free), n=1, cutoff=0.6)
+        j = free[close[0]] if close else i if len(notes) == len(sections) and i not in used else None
+        if j is not None: used.add(j)                        # each returned section is used once
+        aligned.append({**(notes[j] if j is not None else {'blocks': []}), 'heading': s['heading']})
+    return {'notes': aligned}
+
+
 def _lines(x):
     """traps / revision card lines: strings, from strings or {title, text} dicts."""
     return [(f"**{d.get('title')}:** {d.get('text', '')}" if isinstance(d, dict) and d.get('title') else _text(d)) for d in (x or []) if d]
@@ -474,10 +488,12 @@ def example_problems(b, path):
 
 def gate_notes_problems(out, sections):
     notes = out['notes']
-    if len(notes) != len(sections): return [((), f'"notes" must be a list of exactly {len(sections)} sections, in the order given', True)]
+    if len(notes) != len(sections) or not any(n['blocks'] for n in notes):
+        return [((), f'"notes" must be a list of the {len(sections)} sections given, in the order given, each with its blocks', True)]
     probs = []
     for i, (n, s) in enumerate(zip(notes, sections)):
-        if not n['blocks']: probs.append((('notes', i), 'this section has no blocks: write it', True)); continue
+        if not n['blocks']:
+            probs.append((('notes', i), 'this section is missing: write it in full as the plan describes it: ' + json.dumps(s, ensure_ascii=False), True)); continue
         probs += block_problems(n['blocks'], GATE_BLOCKS, ('notes', i, 'blocks'))
         probs += [(item_path(p), m, h) for p, m, h in math_problems(n['blocks'], ('notes', i, 'blocks'))]
         bl = list(walk_blocks(n['blocks']))

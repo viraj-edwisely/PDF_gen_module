@@ -91,6 +91,22 @@ def test_failures_seen_in_real_pdfs():
     assert llm.stuck('{"a": 1' + '}]' * 300) and not llm.stuck('ordinary words ' * 40)
 
 
+def test_notes_are_matched_to_the_plan():
+    """A reply with sections missing, renamed or reordered is not thrown away: the missing one goes to the repair."""
+    plan = [{'heading': h} for h in ('Definition of the Fourier transform', 'Properties', 'Common pairs', 'Parseval')]
+    ex = {'type': 'example', 'problem': 'p', 'solution': 's'}
+    reply = {'notes': [{'heading': 'Common Fourier pairs', 'blocks': ['c', ex]}, {'heading': 'Definition of the Fourier Transform', 'blocks': ['d', ex]},
+                       {'heading': 'Properties', 'blocks': ['p', ex]}]}
+    out = C.align_notes(C.gate_notes(reply), plan)
+    assert [n['heading'] for n in out['notes']] == [p['heading'] for p in plan]
+    assert [n['blocks'][0]['text'] for n in out['notes'][:3]] == ['d', 'p', 'c'] and out['notes'][3]['blocks'] == []
+    probs = [p for p in C.gate_notes_problems(out, plan) if p[0] == ('notes', 3)]
+    assert probs and probs[0][2] and 'Parseval' in probs[0][1]
+    same = C.align_notes(C.gate_notes({'notes': [{'blocks': ['x']}] * 4}), plan)        # no headings, right count: by position
+    assert all(n['blocks'] for n in same['notes'])
+    assert C.gate_notes_problems(C.align_notes(C.gate_notes({}), plan), plan)[0][0] == ()   # nothing usable: ask again
+
+
 def test_name_sake_content_is_flagged():
     """Worked examples and figures that exist only to tick a box (seen in the Torsion and Fourier PDFs)."""
     fig = {'type': 'figure', 'kind': 'plot', 'spec': {'xlabel': 'θ', 'ylabel': 'T', 'curves': [{'expr': '4774.6 + 1432.4*sin(x)', 'range': [0, 6.3]}]}}

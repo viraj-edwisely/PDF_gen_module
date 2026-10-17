@@ -49,7 +49,7 @@ python tools/eval.py start | score NAME | compare A B   # measure PDF quality on
 ```
 
 ## How it works (short)
-- `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model.
+- `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model (a scope up to 16k tokens is sent whole; a larger one is searched, and each GATE notes call searches its own planned sections).
 - `pipeline.py`: the steps for one PDF; every finished step is saved, so Resume never pays twice. Each model reply is tidied and checked by `content.py`; only broken items go back to the model (one repair), and what stays broken is left out with a note. GATE answer keys get arithmetic checks and a second-model check.
 - `llm.py`: Claude / OpenAI / Gemini (system prompt cached). `pyq.py`: PYQ sources, verified against the page text.
 - `jobs.py`: background workers (topics of a run in parallel, book processing), cancel, resume. `render/`: the PDF renderers (GATE frame, Non-GATE module), figures, the drawing check (`check_content.py`) and the GATE checker.

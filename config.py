@@ -23,8 +23,8 @@ WORKERS = 4               # PDFs (and book uploads) processed at the same time, 
 TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time
 PARALLEL = 4              # model calls running at the same time inside one PDF
 VERIFY_PROVIDER = 'Claude'    # the second model that re-checks GATE answer keys (falls back to the run's writer without its key)
-SCOPE_TOKEN_BUDGET = 40_000   # scope text up to this size is sent whole, in page order
-TOPIC_TOKEN_BUDGET = 8_000    # per-topic retrieval budget for larger scopes
+SCOPE_TOKEN_BUDGET = 16_000   # scope text up to this size is sent whole, in page order (it goes into 4 calls, so larger scopes are searched)
+TOPIC_TOKEN_BUDGET = 8_000    # retrieval budget per call for larger scopes (GATE notes and questions search their own sections)
 STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted
 
 

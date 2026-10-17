@@ -186,8 +186,16 @@ class Job:
 
 
 # ---------------------------------------------------------------- shared steps
-def book_note(found):
-    return 'Book material for this topic follows.' if found else 'No book material is available for this topic: write it from your own knowledge.'
+def book_note(found, text):
+    if found: return 'Book material for this topic follows.'
+    if text: return 'The book scope does not cover this topic directly. The closest passages follow: use them where they fit and write the rest from your own knowledge.'
+    return 'No book material is available for this topic: write it from your own knowledge.'
+
+
+def book_warning(ctx, what='Topic'):
+    if ctx['found']: return None
+    if ctx['text']: return f'{what} only loosely matched in the chosen book scope: the closest passages were used, the rest is from the model\'s own knowledge.'
+    return f'{what} not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.'
 
 
 def run_book(run):
@@ -292,16 +300,22 @@ def gate(job):
     o, topic = run['options'], rt['name']
     book = run_book(run)
     job.progress('Reading the book' if book else 'Starting')
+    search = lambda sections=(): retrieve.topic_context(book, run['scope_start'], run['scope_end'], topic, sections)
     def context():
-        ctx = retrieve.topic_context(book, run['scope_start'], run['scope_end'], topic)
-        if book and not ctx['found']: job.warn('Topic not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
+        ctx = search()
+        if book and book_warning(ctx): job.warn(book_warning(ctx))
         return ctx
     ctx = job.step('context', context)
-    book_text, note = (ctx['text'] if ctx['found'] else ''), book_note(ctx['found'])
     job.progress('Previous-year questions')
     pyqs = job.step('pyq', lambda: pyq_step(job, topic, o))
     pyq_brief = '\n'.join('- ' + q['question'][:160] for q in pyqs) or '(none)'
-    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=book_text, BOOK_NOTE=note, USER_PROMPT=o.get('prompt') or '(none)')
+    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=ctx['text'], BOOK_NOTE=book_note(ctx['found'], ctx['text']), USER_PROMPT=o.get('prompt') or '(none)')
+
+    def book_for(name, sections):
+        """The prompt fields with book text searched for these planned sections (a whole scope is already all there)."""
+        if ctx['whole_scope'] or not ctx['text']: return base
+        c = job.step(name, lambda: search([s['heading'] for s in sections]))
+        return {**base, 'BOOK': c['text'], 'BOOK_NOTE': book_note(c['found'], c['text'])}
 
     job.progress('Planning the sections')
     plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or ''), tidy=C.gate_plan, problems=C.gate_plan_problems)
@@ -314,8 +328,8 @@ def gate(job):
 
     def write_notes(k, group):
         others = ', '.join(s['heading'] for s in sections if s not in group) or '(none)'
-        return job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **base, SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes),
-                       tidy=C.gate_notes, problems=lambda out: C.gate_notes_problems(out, group))['notes']
+        return job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes),
+                       tidy=lambda x: C.align_notes(C.gate_notes(x), group), problems=lambda out: C.gate_notes_problems(out, group))['notes']
 
     job.progress('Writing notes and questions (at the same time)')
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
@@ -355,15 +369,16 @@ def nongate(job):
     def context():
         ctxs = [retrieve.topic_context(book, run['scope_start'], run['scope_end'], t) for t in names]
         for t, c in zip(names, ctxs):
-            if book and not c['found']: job.warn(f'Topic "{t}" not found in the chosen book scope: written from the model\'s own knowledge, not grounded in the book.')
-        whole = ctxs[0]['text'] if all(c['whole_scope'] for c in ctxs) else None
-        return {'whole': whole, 'per_topic': [c['text'] if c['found'] else '' for c in ctxs], 'found': [c['found'] for c in ctxs]}
+            if book and book_warning(c): job.warn(book_warning(c, f'Topic "{t}"'))
+        whole = next((c['text'] for c in ctxs if c['text']), None) if all(c['whole_scope'] for c in ctxs) else None
+        return {'whole': whole, 'per_topic': [c['text'] for c in ctxs], 'found': [c['found'] for c in ctxs]}
     ctx = job.step('context', context)
     base = dict(SUBJECT=o['subject'], USER_PROMPT=o.get('prompt') or '(none: use the standard template)')
 
     job.progress('Planning the module')
+    plan_book = ctx['whole'] or '\n\n'.join(t for t in ctx['per_topic'] if t)[:160_000]
     plan = job.ask('plan', fill(read('nongate/plan.md'), **base, TOPICS='; '.join(names), STUDY_TIME=o.get('study_time') or '', AUDIENCE=o.get('audience') or '',
-                                BOOK_NOTE=book_note(any(ctx['found'])), BOOK=ctx['whole'] or '\n\n'.join(ctx['per_topic'])[:160_000]),
+                                BOOK_NOTE=book_note(any(ctx['found']), plan_book), BOOK=plan_book),
                    tidy=C.nongate_plan, problems=C.nongate_plan_problems)
 
     # topics are written three to a call, and the calls run at the same time
@@ -372,10 +387,10 @@ def nongate(job):
 
     def write_topics(k, idx):
         group, js = [plan_topics[i] for i in idx], list(dict.fromkeys(min(i, len(names) - 1) for i in idx))
-        book_text = ctx['whole'] or '\n\n'.join(f"### {names[j]}\n{ctx['per_topic'][j]}" for j in js)
+        book_text = ctx['whole'] or '\n\n'.join(f"### {names[j]}\n{ctx['per_topic'][j]}" for j in js if ctx['per_topic'][j])
         out = job.ask(f'topics_{k}', fill(read('nongate/topic.md'), **base, MODULE=plan['title'], TOPICS=json.dumps(group, ensure_ascii=False),
                                           OTHERS=', '.join(t['title'] for t in plan_topics if t not in group) or '(none)',
-                                          BOOK_NOTE=book_note(any(ctx['found'][j] for j in js)), BOOK=book_text),
+                                          BOOK_NOTE=book_note(any(ctx['found'][j] for j in js), book_text), BOOK=book_text),
                       tidy=C.nongate_topics, problems=lambda out: C.nongate_topics_problems(out, len(group)))
         return [{'title': g['title'], 'tagline': g.get('tagline', ''), 'blocks': t['blocks']} for g, t in zip(group, out['topics'])]
 
