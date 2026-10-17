@@ -92,16 +92,17 @@ TEX_WORDS = set('frac tfrac theta tau tan tanh times text textbf textrm to top t
 
 
 def fix_escapes(text):
-    """Double the single backslash of LaTeX commands inside JSON text, so they survive json.loads."""
+    """Double the single backslash of LaTeX commands (\\frac) and symbols (\\{ \\, \\% \\_) inside JSON text, so they survive json.loads."""
     def one(m):
         lead, word = m.group(1), m.group(2)
         bad = word[0] not in 'bfnrtu' or word in TEX_WORDS or (word[0] == 'u' and not re.match(r'u[0-9a-fA-F]{4}', word))
         return lead + ('\\\\' if bad else '\\') + word
-    return re.sub(r'(?<!\\)((?:\\\\)*)\\([A-Za-z]+)', one, text)
+    text = re.sub(r'(?<!\\)((?:\\\\)*)\\([A-Za-z]+)', one, text)
+    return re.sub(r'(?<!\\)((?:\\\\)*)\\([^"\\/A-Za-z])', lambda m: m.group(1) + '\\\\' + m.group(2), text)   # not a JSON escape
 
 
 def loads(text):
-    return json.loads(fix_escapes(text))
+    return json.loads(fix_escapes(text), strict=False)      # strict=False: a raw line break inside a string is kept
 
 
 def parse_json(text):

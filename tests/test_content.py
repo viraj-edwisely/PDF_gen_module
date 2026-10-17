@@ -72,6 +72,11 @@ def test_failures_seen_in_real_pdfs():
     # LaTeX with one backslash: \frac must not become a form feed, \right not a carriage return
     o = llm.parse_json(r'{"a": "$\frac{1}{2}$ \right) \theta", "b": "one\nTwo"}')
     assert o == {'a': r'$\frac{1}{2}$ \right) \theta', 'b': 'one\nTwo'}
+    # LaTeX symbols that are not JSON escapes (Gemini, Graphs PDF): \{ \, \% \_ \; \! \| \( and digits
+    o = llm.parse_json(r'{"a": "$V = \{1, 2\}$, $a\,b\;c\!d$, 50\% of x\_1, \|E\|, \(x\) \\ \2", "b": "line\nnext \"q\" \/ ½"}')
+    assert o == {'a': r'$V = \{1, 2\}$, $a\,b\;c\!d$, 50\% of x\_1, \|E\|, \(x\) \ \2', 'b': 'line\nnext "q" / ½'}
+    assert llm.parse_json('{"a": "two\nlines"}') == {'a': 'two\nlines'}       # a raw line break inside a string
+    assert C.clean(r'degree \(d(v) = 3\) and \[ \sum d = 2|E| \], rows a \\[2pt] b') == r'degree $d(v) = 3$ and $\sum d = 2|E|$, rows a \\[2pt] b'
     # a block written as a string of JSON becomes a block; leaked JSON in text is a hard problem
     assert C.block('{"type": "formula", "latex": "x = 1"}', 'gate') == {'type': 'formula', 'latex': 'x = 1'}
     leak = [{'type': 'para', 'text': 'ref":"notes/1","value":{' + '}]' * 10}]

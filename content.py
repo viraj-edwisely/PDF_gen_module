@@ -89,9 +89,10 @@ def unref(s): return tuple(int(x) if x.isdigit() else x for x in str(s).strip('/
 # ---------------------------------------------------------------- tidy: fix predictable slips in code
 def clean(x):
     """NUL characters out (the database refuses them); 'GATE 2027'-style target years out of printed text; escapes such as
-    \\u0024 or \\u00bd that a model wrote out as text (double-escaped) back to their characters."""
+    \\u0024 or \\u00bd that a model wrote out as text (double-escaped) back to their characters; \\( \\) and \\[ \\] maths to $...$."""
     if isinstance(x, str):
         x = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), x.replace('\x00', ''))
+        x = re.sub(r'(?<!\\)\\\((.+?)(?<!\\)\\\)|(?<!\\)\\\[(.+?)(?<!\\)\\\]', lambda m: '$' + (m.group(1) or m.group(2)).strip() + '$', x, flags=re.S)
         return re.sub(r'\bGATE\s*20\d\d\b', 'GATE', x.replace('\x00', ''))
     if isinstance(x, list): return [clean(v) for v in x]
     if isinstance(x, dict): return {k: clean(v) if k != 'source' else v for k, v in x.items()}
