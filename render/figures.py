@@ -13,7 +13,7 @@ CLI:  python figures.py <kind> spec.json out.png      (draw one figure)
       python figures.py --gallery out_dir             (draw every GALLERY example)
       python figures.py --reference                   (print the spec reference given to the model)
 """
-import hashlib, json, os, shutil, subprocess, sys, tempfile, textwrap
+import hashlib, json, os, re, shutil, subprocess, sys, tempfile, textwrap
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -28,7 +28,7 @@ PURPLE, LAV, YEL, INK, GREY, LINE = '#4D2A87', '#F0EBFA', '#FFE100', '#1F1A2E', 
 PALETTE = ['#4D2A87', '#7B5CB8', '#D9A400', '#2E8B87', '#B5487A', '#5A7FBF', '#8C6D1F', '#3F7F4F']
 ACCENTS = {'purple': PURPLE, 'lav': LAV, 'yellow': YEL, 'accent': YEL, 'gold': '#D9A400', 'teal': '#2E8B87',
            'mid': '#7B5CB8', 'red': '#C0392B', 'green': '#3F7F4F', 'grey': '#BDB6CC', 'white': '#FFFFFF'}
-DPI = 200
+DPI = 300
 CACHE = os.path.join(tempfile.gettempdir(), 'topicpdf_fig')
 
 
@@ -135,6 +135,7 @@ def plot(spec, out):
     CURVE: {"x":[...], "y":[...]}  or  {"expr": "2*x**2 - 3", "range": [a, b]}
            or {"param": ["cx + r*cos(t)", "r*sin(t)"], "range": [0, 6.283]}  (t is the parameter)
            plus optional "label", "color", "style" ('-', '--', ':'), "step": true, "fill": true|colour,
+           "stem": true (impulses / line spectra: a vertical line from 0 to each y, with an arrow head),
            "markers": true, "values": true (print y at the given x points), "lw"."""
     brand()
     fig, ax = plt.subplots(figsize=tuple(spec.get('size', (6.4, 3.0))))
@@ -149,7 +150,10 @@ def plot(spec, out):
             x, y = np.asarray(c['x'], float), np.asarray(c['y'], float)
         colr = col(c.get('color'), PALETTE[k % len(PALETTE)]); k += 1
         kw = dict(color=colr, lw=c.get('lw', 2), ls=c.get('style', '-'), label=c.get('label') if c.get('lw', 2) else None)
-        if c.get('step'): ax.step(x, y, where=c.get('where', 'post'), **kw)
+        if c.get('stem'):
+            ax.vlines(x, 0, y, color=colr, lw=c.get('lw', 2), label=kw['label'])
+            ax.plot(x, y, '^' if c.get('arrow', True) else 'o', color=colr, ms=6)
+        elif c.get('step'): ax.step(x, y, where=c.get('where', 'post'), **kw)
         else: ax.plot(x, y, marker='o' if c.get('markers') else None, ms=4, **kw)
         if c.get('fill'):
             fc = colr if c['fill'] is True else col(c['fill'])
@@ -175,8 +179,6 @@ def plot(spec, out):
     for a in spec.get('annotations', []):
         ax.annotate(a['text'], tuple(a['xy']), xytext=tuple(a.get('xytext', a['xy'])), fontsize=8, color=INK,
                     arrowprops=dict(arrowstyle='->', color=GREY, lw=0.8) if a.get('xytext') else None)
-    if spec.get('axes_at_zero'):
-        ax.spines['left'].set_position('zero'); ax.spines['bottom'].set_position('zero')
     if spec.get('logx'): ax.set_xscale('log')
     if spec.get('logy'): ax.set_yscale('log')
     if spec.get('xlim'): ax.set_xlim(spec['xlim'])
@@ -185,14 +187,26 @@ def plot(spec, out):
     if spec.get('yticks') is not None: ax.set_yticks(spec['yticks'])
     if spec.get('equal'): ax.set_aspect('equal', adjustable='datalim')
     if spec.get('grid'): ax.grid(True, lw=0.6)
-    if spec.get('axes_at_zero'):   # labels at the arrow ends so they never sit on the curve
+    if spec.get('axes_at_zero'):   # the zero axes as lines through the plot; tick labels stay on the frame, clear of the data
+        (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
+        if y0 < 0 < y1: ax.axhline(0, color=INK, lw=0.9, zorder=1.5)
+        if x0 < 0 < x1: ax.axvline(0, color=INK, lw=0.9, zorder=1.5)
+        ax.set_xlim(x0, x1); ax.set_ylim(y0, y1)
         ax.set_xlabel(spec.get('xlabel', ''), loc='right'); ax.set_ylabel(spec.get('ylabel', ''), loc='top', rotation=0, labelpad=-4)
         ax.yaxis.set_label_coords(-0.02, 1.04)
     else:
         ax.set_xlabel(spec.get('xlabel', '')); ax.set_ylabel(spec.get('ylabel', ''))
-    if spec.get('title'): ax.set_title(spec['title'])
-    if spec.get('legend', any(c.get('label') for c in spec.get('curves', []))): ax.legend(fontsize=8)
+    if spec.get('title'): ax.set_title(spec['title'], pad=16 if spec.get('axes_at_zero') and spec.get('ylabel') else 6)
+    named = sum(bool(c.get('label')) for c in spec.get('curves', []))
+    if spec.get('legend', named >= 2): legend(ax, named)
     return save(fig, out)
+
+
+def legend(ax, n):
+    """Above the plot, right-aligned, in one or two rows: clear of the curves, bars and tick labels."""
+    if not ax.get_legend_handles_labels()[0]: return
+    ax.legend(fontsize=8, loc='lower right', bbox_to_anchor=(1, 1.01), ncol=min(max(n, 1), 4), frameon=False, borderaxespad=0,
+              handlelength=1.6, columnspacing=1.2)
 
 
 # ---------------------------------------------------------------- bars
@@ -213,10 +227,15 @@ def bars(spec, out):
         if spec.get('values', True): ax.bar_label(r, labels=[_fmt(t) for t in v], fontsize=7.5, color=INK,
                                                    label_type='center' if spec.get('stacked') else 'edge', padding=2)
         if spec.get('stacked'): base = base + v
-    (ax.set_yticks if spec.get('horizontal') else ax.set_xticks)(x); (ax.set_yticklabels if spec.get('horizontal') else ax.set_xticklabels)(cats)
+    names = [textwrap.fill(str(c), 14) for c in cats]
+    if spec.get('horizontal'): ax.set_yticks(x); ax.set_yticklabels(names)
+    else:
+        ax.set_xticks(x); ax.set_xticklabels(names, rotation=30 if len(cats) > 8 else 0, ha='right' if len(cats) > 8 else 'center')
+    if not spec.get('stacked') and (v := np.concatenate([np.asarray(s_['values'], float) for s_ in ser])).min() < 0:
+        ax.axhline(0, color=INK, lw=0.8) if not spec.get('horizontal') else ax.axvline(0, color=INK, lw=0.8)
     ax.set_xlabel(spec.get('xlabel', '')); ax.set_ylabel(spec.get('ylabel', ''))
     if spec.get('title'): ax.set_title(spec['title'])
-    if n > 1 or spec.get('legend'): ax.legend(fontsize=8)
+    if n > 1 or spec.get('legend'): legend(ax, n)
     return save(fig, out)
 
 
@@ -227,6 +246,15 @@ def _install_fonts():
         os.makedirs(d, exist_ok=True)
         for f in os.listdir(FONTS): shutil.copy(os.path.join(FONTS, f), d)
         if shutil.which('fc-cache'): subprocess.run(['fc-cache', '-f', d], capture_output=True)
+
+
+def node_lines(t):
+    """A long node label on several lines: after " = " when it is an equation, otherwise between words (never inside one)."""
+    if len(t) <= 18: return [t]
+    if ' = ' in t:
+        left, right = t.split(' = ', 1)
+        return [left + ' ='] + (textwrap.wrap(right, 22, break_long_words=False) or [''])
+    return textwrap.wrap(t, 18, break_long_words=False) or ['']
 
 
 def graph(spec, out):
@@ -247,14 +275,14 @@ def graph(spec, out):
          f'graph [rankdir={spec.get("rankdir", "TB")}, bgcolor=transparent, pad=0.15, nodesep={spec.get("nodesep", 0.35)}, '
          f'ranksep={spec.get("ranksep", 0.45)}, size="{spec.get("size", "7,4")}", dpi={DPI}, fontname="Poppins"];',
          f'node [shape={ds}, style="{node_style}", fillcolor="{LAV}", color="{PURPLE}", penwidth=1.4, fontname="Poppins Medium", '
-         f'fontsize=11, fontcolor="{INK}", width=0.42, height=0.42, fixedsize={"true" if fixed else "false"}, margin="0.1,0.05"];',
+         f'fontsize=11, fontcolor="{INK}", width=0.42, height=0.42, fixedsize={"true" if fixed else "false"}, margin="0.14,0.07"];',
          f'edge [color="{GREY}", penwidth=1.2, fontname="Poppins", fontsize=10, fontcolor="{INK}", arrowsize=0.7];']
     q = lambda s: '"' + str(s).replace('"', '\\"') + '"'
     for n in spec.get('nodes', []):
         n = n if isinstance(n, dict) else {'id': n}
         a = []
         if 'label' in n:
-            lab = str(n['label']) if n.get('shape') == 'record' else '\\n'.join(textwrap.wrap(str(n['label']), 16) or [''])    # long labels wrap onto several lines
+            lab = str(n['label']) if n.get('shape') == 'record' else '\\n'.join(node_lines(str(n['label'])))    # long labels wrap onto several lines
             a.append(f'label={q(lab)}')
         if n.get('shape'):
             if n['shape'] in ('circle', 'doublecircle') and len(str(n.get('label', n['id']))) > 4: n = dict(n, shape='box')
@@ -288,6 +316,8 @@ def graph(spec, out):
     args = [eng, '-Tpng', dot, '-o', out] + (['-n'] if eng == 'neato' and any(isinstance(n, dict) and n.get('pos') for n in spec.get('nodes', [])) else [])
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode: raise RuntimeError('graphviz: ' + r.stderr[-300:])
+    from PIL import Image as PI
+    PI.open(out).save(out, dpi=(DPI, DPI))
     return out
 
 
@@ -299,33 +329,41 @@ def cells(spec, out):
     Use for arrays, memory frames over time, page/segment tables, cache sets, registers, stack/queue,
     hash tables, bit fields, Belady/LRU traces (one row per frame, one column per reference)."""
     brand()
-    rows = spec['rows']; cw, ch = spec.get('cell_w', 0.55), spec.get('cell_h', 0.42)
+    rows = spec['rows']; base, ch = spec.get('cell_w', 0.55), spec.get('cell_h', 0.42)
     ncol = max(len(r['cells']) for r in rows)
-    longest = max([len(_fmt((c if isinstance(c, dict) else {'text': c}).get('text', '') or '')) for r in rows for c in r['cells']] + [1])
-    need = 0.09 * longest + 0.12                       # width the longest cell text needs at 9 pt
-    cw = max(cw, min(need, 1.3)); fs = 9 * min(1.0, (cw - 0.12) / (0.09 * longest))
+    cell = lambda c: c if isinstance(c, dict) else {'text': c}
+    text = lambda c: _fmt(cell(c).get('text', '') or '')
+    wrapped = lambda t: textwrap.fill(t, max(8, -(-len(t) // 2) + 2)) if len(t) > 16 else t       # long field names on two lines
+    width = lambda t: max((len(x) for x in wrapped(t).split('\n')), default=0)
+    # each column as wide as its longest text needs at 9 pt, and the whole grid at most about a page wide
+    cws = [max([base] + [0.085 * width(text(r['cells'][j])) + 0.16 for r in rows if j < len(r['cells'])]) for j in range(ncol)]
     lab_w = max(1.1, 0.09 * max(len(str(r.get('label', ''))) for r in rows) + 0.2) if any(r.get('label') for r in rows) else 0.05
-    fig = plt.figure(figsize=(lab_w + ncol * cw + 0.2, len(rows) * (ch + 0.12) + 0.45))
-    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(-lab_w, ncol * cw + 0.1); ax.set_ylim(-0.1, len(rows) * (ch + 0.12) + 0.35); ax.axis('off')
+    if sum(cws) > 6.6 - lab_w: cws = [max(0.3, w * (6.6 - lab_w) / sum(cws)) for w in cws]
+    xs = [sum(cws[:j]) for j in range(ncol)]
+    fs = max(6.5, min([9.0] + [9 * (cws[j] - 0.1) / (0.085 * width(text(r['cells'][j]))) for r in rows for j in range(len(r['cells'])) if width(text(r['cells'][j]))]))
+    ch = max(ch, 0.62) if any('\n' in wrapped(text(c)) for r in rows for c in r['cells']) else ch
+    total = sum(cws)
+    fig = plt.figure(figsize=(lab_w + total + 0.2, len(rows) * (ch + 0.12) + 0.45))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(-lab_w, total + 0.1); ax.set_ylim(-0.1, len(rows) * (ch + 0.12) + 0.35); ax.axis('off')
     idx = spec.get('index')
     top = len(rows) * (ch + 0.12)
     if idx:
         hdr = idx if isinstance(idx, list) else [str(spec.get('index_start', 0) + i) for i in range(ncol)]
-        for j, h in enumerate(hdr): ax.text(j * cw + cw / 2, top + 0.06, str(h), ha='center', va='bottom', fontsize=7.5, color=GREY)
+        for j, h in enumerate(hdr[:ncol]): ax.text(xs[j] + cws[j] / 2, top + 0.06, str(h), ha='center', va='bottom', fontsize=max(fs - 1, 7), color=GREY)
     for i, r in enumerate(rows):
         y = top - (i + 1) * (ch + 0.12) + 0.06
         if r.get('label'): ax.text(-0.08, y + ch / 2, r['label'], ha='right', va='center', fontsize=8.5, color=PURPLE, fontweight='bold')
         for j, c in enumerate(r['cells']):
-            c = c if isinstance(c, dict) else {'text': c}
+            c = cell(c)
             if c.get('text') is None and not c.get('fill'): continue
             fc = col(c.get('fill'), LAV) if c.get('fill') else ('white' if c.get('empty') else LAV)
-            ax.add_patch(plt.Rectangle((j * cw, y), cw, ch, facecolor=fc, edgecolor=PURPLE, lw=1.1))
+            ax.add_patch(plt.Rectangle((xs[j], y), cws[j], ch, facecolor=fc, edgecolor=PURPLE, lw=1.1))
             tc = 'white' if fc in (PURPLE, '#7B5CB8', '#2E8B87') else INK
-            ax.text(j * cw + cw / 2, y + ch / 2, _fmt(c.get('text', '')), ha='center', va='center', fontsize=fs, color=tc)
-            if c.get('note'): ax.text(j * cw + cw / 2, y - 0.02, c['note'], ha='center', va='top', fontsize=6.5, color=GREY)
+            ax.text(xs[j] + cws[j] / 2, y + ch / 2, wrapped(text(c)), ha='center', va='center', fontsize=fs, color=tc, linespacing=1.1)
+            if c.get('note'): ax.text(xs[j] + cws[j] / 2, y - 0.02, c['note'], ha='center', va='top', fontsize=6.5, color=GREY)
     for a in spec.get('arrows', []):
         i, j = a['row'], a['cell']; y = top - (i + 1) * (ch + 0.12) + 0.06
-        ax.annotate(a['text'], (j * cw + cw / 2, y + ch), xytext=(j * cw + cw / 2, y + ch + 0.3), ha='center', fontsize=8,
+        ax.annotate(a['text'], (xs[j] + cws[j] / 2, y + ch), xytext=(xs[j] + cws[j] / 2, y + ch + 0.3), ha='center', fontsize=8,
                     color=PURPLE, arrowprops=dict(arrowstyle='->', color=PURPLE))
     return save(fig, out)
 
@@ -336,11 +374,20 @@ def beam(spec, out):
               "loads": [{"type": "point", "x": 2, "label": "10 kN"}, {"type": "udl", "x1": 0, "x2": 4, "label": "5 kN/m"},
                         {"type": "uvl", "x1": 0, "x2": 4, "w1": 0, "w2": 1, "label": "..."},
                         {"type": "moment", "x": 3, "label": "20 kN·m", "ccw": true}],
-              "dims": [[x1, x2, "label"], ...] (dimension lines under the beam), "points": {"A": 0, "B": 6}}"""
+              "dims": [[x1, x2, "label"], ...] (dimension lines under the beam), "points": {"A": 0, "B": 6},
+              "sections": [[x1, x2, diameter, "d = 40 mm"], ...] (a stepped shaft or beam: each part drawn to its relative size)}
+    Shafts in torsion are beams too: a fixed support, a "moment" load for the torque, "sections" for the steps."""
     brand()
     L = float(spec['length']); s = 6.4 / L
     fig, ax = plt.subplots(figsize=(6.6, 2.3)); ax.set_xlim(-0.08 * L, 1.08 * L); ax.set_ylim(-1.3, 1.6); ax.axis('off')
-    ax.add_patch(plt.Rectangle((0, -0.08), L, 0.16, color=PURPLE))
+    secs = spec.get('sections')        # a stepped shaft or beam: [[x1, x2, diameter or depth, "label"], ...]
+    if secs:
+        dmax = max(float(sc[2]) for sc in secs)
+        for sc in secs:
+            hh = 0.34 * float(sc[2]) / dmax
+            ax.add_patch(plt.Rectangle((sc[0], -hh / 2), sc[1] - sc[0], hh, color=PURPLE, ec='white', lw=0.6))
+            if len(sc) > 3: ax.text((sc[0] + sc[1]) / 2, -0.26, sc[3], ha='center', va='top', fontsize=8, color=INK)
+    else: ax.add_patch(plt.Rectangle((0, -0.08), L, 0.16, color=PURPLE))
     for sp in spec.get('supports', []):
         x, t = sp['x'], sp.get('type', 'pin')
         if t == 'fixed':
@@ -389,8 +436,9 @@ def beam(spec, out):
 def _anchor(ids, ref):
     """'R1.end' -> the placed element R1's anchor named 'end' (anchor names are checked, not blindly getattr'd)."""
     i, an = ref.split('.')
-    if an not in ids[i].anchors: raise ValueError(f'unknown anchor {ref!r}')
-    return ids[i].anchors[an]
+    if i not in ids: raise ValueError(f'no element with id {i!r} before {ref!r}')
+    if an not in ids[i].anchors: raise ValueError(f'unknown anchor {ref!r}; {i} has {sorted(ids[i].anchors)}')
+    return getattr(ids[i], an)          # the anchor's position in the drawing (anchors[...] holds it relative to the element)
 
 
 def circuit(spec, out):
@@ -433,8 +481,36 @@ KINDS = {'gantt': gantt, 'timeline': gantt, 'plot': plot, 'bars': bars, 'graph':
          'beam': beam, 'circuit': circuit}
 
 
+GREEK = {'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε', 'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'kappa': 'κ',
+         'lambda': 'λ', 'mu': 'µ', 'nu': 'ν', 'xi': 'ξ', 'pi': 'π', 'rho': 'ρ', 'sigma': 'σ', 'tau': 'τ', 'phi': 'φ', 'chi': 'χ', 'psi': 'ψ',
+         'omega': 'ω', 'Gamma': 'Γ', 'Delta': 'Δ', 'Theta': 'Θ', 'Lambda': 'Λ', 'Pi': 'Π', 'Sigma': 'Σ', 'Phi': 'Φ', 'Psi': 'Ψ', 'Omega': 'Ω',
+         'infty': '∞', 'cdot': '·', 'times': '×', 'leq': '≤', 'le': '≤', 'geq': '≥', 'ge': '≥', 'neq': '≠', 'pm': '±', 'to': '→',
+         'rightarrow': '→', 'circ': '°', 'deg': '°', 'approx': '≈'}
+SUB = str.maketrans('0123456789', '₀₁₂₃₄₅₆₇₈₉')
+
+
+def text_label(s):
+    """A figure label as readable text: \\u00bd -> ½, \\omega -> ω, x_0 -> x₀. Labels inside $...$ stay maths."""
+    if '$' in s or ('\\' not in s and '_' not in s): return s
+    tex = bool(re.search(r'\\[A-Za-z]{2,}', s))           # braces are TeX grouping only in a TeX label; {1,2} elsewhere is a set
+    s = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+    s = re.sub(r'\\([A-Za-z]+)', lambda m: GREEK.get(m.group(1), m.group(1)), s)
+    s = re.sub(r'_\{?(\d+)\}?', lambda m: m.group(1).translate(SUB), s)
+    return s.replace('{', '').replace('}', '') if tex else s
+
+
+def labels(x, key=None):
+    """Every text in a spec through text_label, except expressions that are evaluated."""
+    if key in ('expr', 'param'): return x
+    if isinstance(x, str): return text_label(x)
+    if isinstance(x, list): return [labels(v, key) for v in x]
+    if isinstance(x, dict): return {k: labels(v, k) for k, v in x.items()}
+    return x
+
+
 def render(kind, spec, out=None):
     """Render a figure (cached by content hash); returns the PNG path."""
+    spec = labels(spec)
     if kind not in KINDS: raise ValueError(f'unknown figure kind {kind!r}; use one of {sorted(KINDS)} or an image block')
     os.makedirs(CACHE, exist_ok=True)
     key = hashlib.md5(json.dumps([kind, spec], sort_keys=True).encode()).hexdigest()[:16]

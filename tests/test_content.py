@@ -46,7 +46,8 @@ def test_maths_problems():
     probs = C.math_problems({'text': 'EA = 4416_{10}$'}, ('notes', 0, 'blocks', 2))
     assert probs and probs[0][1].startswith('unbalanced $')
     assert C.math_problems({'type': 'code', 'text': 'echo $HOME'}, ()) == []
-    assert 'cannot be drawn' in C.math_problems({'text': r'$\begin{cases} a \end{cases}$'}, ())[0][1]
+    assert C.math_problems({'text': r'$\begin{cases} a & x > 0 \end{cases}$', 'latex': r'\boxed{x} \xrightarrow{f} y'}, ()) == []    # rewritten by render/tex.py
+    assert 'cannot be drawn' in C.math_problems({'text': r'$\begin{tikzpicture} a \end{tikz}$'}, ())[0][1]                 # an environment it cannot rewrite
 
 
 def test_paths():
@@ -63,3 +64,42 @@ def test_paths():
 def test_question_checks_feed_problems():
     q = C.question({'qtype': 'NAT', 'question': 'EA ______', 'answer': '3040', 'check': '3050 + 20 + 30', 'marks': 2, 'solution': 's'})
     assert C.question_checks(q, ('practice', 0))[0][0] == ('practice', 0)
+
+
+def test_failures_seen_in_real_pdfs():
+    """Cases from the Torsion and Fourier PDFs (2026-10-16)."""
+    import llm
+    # LaTeX with one backslash: \frac must not become a form feed, \right not a carriage return
+    o = llm.parse_json(r'{"a": "$\frac{1}{2}$ \right) \theta", "b": "one\nTwo"}')
+    assert o == {'a': r'$\frac{1}{2}$ \right) \theta', 'b': 'one\nTwo'}
+    # a block written as a string of JSON becomes a block; leaked JSON in text is a hard problem
+    assert C.block('{"type": "formula", "latex": "x = 1"}', 'gate') == {'type': 'formula', 'latex': 'x = 1'}
+    leak = [{'type': 'para', 'text': 'ref":"notes/1","value":{' + '}]' * 10}]
+    assert C.block_problems(leak, C.GATE_BLOCKS, ('notes', 0, 'blocks'))[0][2] is True
+    # data used by the check but missing from the question (G = 80 GPa); exponents are not data
+    q = {'qtype': 'NAT', 'question': 'Shaft: 90 kW at 300 rpm, twist 1.5 deg over 2 m. D in mm is ______', 'answer': '76.8',
+         'check': '1000*(32*2865*2/(3.14159*80e9*0.02618*0.8025))**0.25'}
+    assert 'uses 80e9' in C.question_checks(C.question(q), ('practice', 0))[0][1]
+    q['question'] = q['question'].replace('2 m.', '2 m, G = 80 GPa.')
+    assert not [m for _, m, _ in C.question_checks(C.question(q), ('practice', 0)) if 'does not state' in m]
+    # NAT ranges accept the usual approximations; written-out escapes become characters
+    assert C.question({'qtype': 'NAT', 'question': 'x ______', 'answer': '382.0', 'answer_range': '381.99 to 382.01'})['answer_range'] == '381.6 to 382.4'
+    assert C.clean(r'\u00bdS(j\u03c9) \u0024') == '½S(jω) $'
+    # an MSQ whose options are letter combinations is malformed
+    msq = {'qtype': 'MSQ', 'question': 'A. x B. y', 'options': ['A, B, C', 'A, C, D', 'B, C, D', 'A, B, D'], 'answer': 'A'}
+    assert C.question_checks(C.question(msq), ('practice', 2))
+    assert llm.stuck('{"a": 1' + '}]' * 300) and not llm.stuck('ordinary words ' * 40)
+
+
+def test_name_sake_content_is_flagged():
+    """Worked examples and figures that exist only to tick a box (seen in the Torsion and Fourier PDFs)."""
+    fig = {'type': 'figure', 'kind': 'plot', 'spec': {'xlabel': 'θ', 'ylabel': 'T', 'curves': [{'expr': '4774.6 + 1432.4*sin(x)', 'range': [0, 6.3]}]}}
+    ex = {'type': 'example', 'problem': ['60 kW at 240 rpm, Tmax 25% above the mean.', fig],
+          'solution': [{'type': 'formula', 'latex': 'T = 2387.3'}, {'type': 'formula', 'latex': 'T_{max} = 2984.2'}], 'check': '2387.3*1.25'}
+    assert any('does not use any of the example' in m for _, m, _ in C.example_problems(ex, ('notes', 0, 'blocks', 1)))
+    fig['spec']['curves'][0]['expr'] = '2387.3 + 596.9*sin(x)'
+    assert C.example_problems(ex, ('notes', 0, 'blocks', 1)) == []
+    assert C.example_problems({'type': 'example', 'problem': 'Find X(j0).', 'solution': 'X(j0) = 2T1.', 'check': '0.004'}, ())
+    assert C.example_problems({'type': 'example', 'problem': 'What happens?', 'solution': 'P1 pre-empts P3.'}, ()) == []   # conceptual
+    assert C.figure_problems({'kind': 'graph', 'spec': {'nodes': ['a', 'b']}}, ())
+    assert C.figure_problems({'kind': 'plot', 'spec': {'curves': []}}, ())

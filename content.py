@@ -16,6 +16,8 @@ RENDER = os.path.join(HERE, 'render')
 sys.path.insert(0, RENDER)
 from check_gate_level import check as gate_check   # noqa: E402  (pure Python)
 from safe_eval import safe_eval                     # noqa: E402  (numpy only)
+from tex import normalize as tex_normalize      # noqa: E402  (pure Python)
+from llm import loads                               # noqa: E402  (json.loads that keeps LaTeX backslashes)
 
 GATE_BLOCKS = {'para', 'subhead', 'bullets', 'numbered', 'formula', 'table', 'example', 'trap', 'note', 'callout', 'code', 'figure', 'spacer', 'pagebreak'}
 NONGATE_BLOCKS = {'situation', 'concept', 'worked_example', 'pitfall', 'note', 'quick_check', 'para', 'table', 'bullets', 'numbered', 'formula', 'figure', 'subhead'}
@@ -29,7 +31,7 @@ TYPE_ALIASES = {'paragraph': 'para', 'text': 'para', 'heading': 'subhead', 'subh
                 'bullet_list': 'bullets', 'unordered_list': 'bullets', 'ordered_list': 'numbered', 'steps': 'numbered', 'equation': 'formula',
                 'math': 'formula', 'diagram': 'figure', 'chart': 'figure', 'warning': 'trap', 'tip': 'note', 'box': 'note', 'important': 'callout',
                 'key_point': 'callout', 'definition': 'note', 'worked-example': 'worked_example', 'workedexample': 'worked_example'}
-BAD_TEX = re.compile(r'\\(begin|end|boxed|cancel|underbrace|overbrace|xrightarrow|xleftarrow|substack)\b|\\\\|&')
+BAD_TEX = re.compile(r'\\begin\{|\\end\{')          # left over after render/tex.py has rewritten a formula: cannot be drawn
 CONTAINERS = ('blocks', 'practice', 'questions', 'traps', 'revision_card', 'paragraphs', 'concepts', 'mistakes', 'checklist', 'topics', 'notes')
 LEVELS = ('Easy', 'Medium', 'Hard')
 
@@ -86,8 +88,11 @@ def unref(s): return tuple(int(x) if x.isdigit() else x for x in str(s).strip('/
 
 # ---------------------------------------------------------------- tidy: fix predictable slips in code
 def clean(x):
-    """NUL characters out (the database refuses them); 'GATE 2027'-style target years out of printed text."""
-    if isinstance(x, str): return re.sub(r'\bGATE\s*20\d\d\b', 'GATE', x.replace('\x00', ''))
+    """NUL characters out (the database refuses them); 'GATE 2027'-style target years out of printed text; escapes such as
+    \\u0024 or \\u00bd that a model wrote out as text (double-escaped) back to their characters."""
+    if isinstance(x, str):
+        x = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), x.replace('\x00', ''))
+        return re.sub(r'\bGATE\s*20\d\d\b', 'GATE', x.replace('\x00', ''))
     if isinstance(x, list): return [clean(v) for v in x]
     if isinstance(x, dict): return {k: clean(v) if k != 'source' else v for k, v in x.items()}
     return x
@@ -109,6 +114,9 @@ def _text(x):
 
 def block(b, mode):
     """One content block, tidied. Returns None for blocks that cannot be shown (images: the app draws all figures itself)."""
+    if isinstance(b, str) and b.strip().startswith('{'):          # a block the model wrote as a string of JSON
+        try: b = loads(b)
+        except ValueError: pass
     if isinstance(b, str): return {'type': 'para', 'text': b}
     if not isinstance(b, dict): return None
     b = dict(b)
@@ -163,6 +171,17 @@ def answer_range(ans):
     return f'{v - step:.{len(s.split(".")[1])}f} to {v + step:.{len(s.split(".")[1])}f}'
 
 
+def widen(rng, ans):
+    """A NAT range at least +-0.1 % of the answer wide, so the usual approximations (9550 for 60000/2pi, pi = 3.14) still score."""
+    try:
+        lo, hi = sorted(float(x) for x in str(rng).split(' to ')); v = float(ans)
+    except (ValueError, TypeError): return rng
+    d = len(str(ans).split('.')[1]) if '.' in str(ans) else 0
+    half = 0.001 * abs(v)
+    if hi - lo >= 2 * half: return rng
+    return f'{min(lo, v - half):.{d}f} to {max(hi, v + half):.{d}f}'
+
+
 def question(q, mode='gate'):
     """One GATE question, tidied: type, marks, options as a list of four, answer as letters or a number."""
     if not isinstance(q, dict): return q
@@ -188,6 +207,7 @@ def question(q, mode='gate'):
         if isinstance(r, (list, tuple)) and len(r) == 2: q['answer_range'] = f'{r[0]} to {r[1]}'
         elif isinstance(r, str) and re.fullmatch(r'\s*-?[\d.]+\s*[-–]\s*-?[\d.]+\s*', r): q['answer_range'] = re.sub(r'\s*[-–]\s*(?=-?[\d.]+\s*$)', ' to ', r.strip())
         if not q.get('answer_range') and q.get('answer') is not None: q['answer_range'] = answer_range(q['answer'])
+        q['answer_range'] = widen(q.get('answer_range'), q.get('answer'))
     else:
         a = q.get('answer')
         if isinstance(a, int) and 1 <= a <= 4: a = 'ABCD'[a - 1]
@@ -324,29 +344,61 @@ def math_problems(x, path):
         if x.get('type') == 'code': return []
         for k, v in x.items():
             if k in ('spec', 'kind', 'check'): continue
-            if k == 'latex' and isinstance(v, str) and BAD_TEX.search(v):
-                out.append((path + (k,), f'the formula uses {BAD_TEX.search(v).group(0)!r}, which cannot be drawn: split it into several formula blocks or a table', True))
+            if k == 'latex' and isinstance(v, str) and BAD_TEX.search(tex_normalize(v)):
+                out.append((path + (k,), f'the formula uses {BAD_TEX.search(tex_normalize(v)).group(0)!r}, which cannot be drawn: split it into several formula blocks or a table', True))
             else: out += math_problems(v, path + (k,))
     elif isinstance(x, list):
         for i, v in enumerate(x): out += math_problems(v, path + (i,))
     elif isinstance(x, str):
         parts = re.split(r'(?<!\\)\$', x)
         if len(parts) % 2 == 0: out.append((path, f'unbalanced $ in "{x[:60]}": every maths expression needs an opening and a closing $ (write a literal dollar as \\$)', True))
-        else: out += [(path, f'the maths uses {BAD_TEX.search(m).group(0)!r}, which cannot be drawn: use plain text, several formula blocks or a table', True) for m in parts[1::2] if BAD_TEX.search(m)]
+        else: out += [(path, f'the maths uses {BAD_TEX.search(tex_normalize(m)).group(0)!r}, which cannot be drawn: use plain text, several formula blocks or a table', True) for m in parts[1::2] if BAD_TEX.search(tex_normalize(m))]
     return out
+
+
+RAW_JSON = re.compile(r'"(?:type|ref|latex|blocks|value|heading)"\s*:|(?:\]\}|\}\]){6,}')
+
+
+def raw_json(x):
+    """True when text holds JSON the model leaked into it (a broken repair, or a block written as text)."""
+    if isinstance(x, str): return bool(RAW_JSON.search(x))
+    if isinstance(x, dict): return any(raw_json(v) for k, v in x.items() if k not in ('spec', 'check'))
+    return isinstance(x, list) and any(raw_json(v) for v in x)
+
+
+CONSTANTS = {0.5, 1, 2, 3, 4, 8, 10, 16, 32, 60, 100, 180, 360, 1000, 9550, 1e3, 1e6, 1e9, 1e12, 1e-3, 1e-6, 1e-9}
+NUM = r'(?<![\w.])\d+(?:\.\d+)?(?:[eE]-?\d+)?'
+
+
+def _digits(v):
+    """The significant digits of a number: 0.04, 40 and 4e1 all give '4'; 80e9 gives '8'."""
+    return f'{abs(v):.6e}'.split('e')[0].replace('.', '').rstrip('0') or '0'
+
+
+def missing_data(chk, given):
+    """Round numbers (data such as G = 80e9 or d = 0.04) that a check uses but the question or problem never states."""
+    expr = str(chk.get('expr') if isinstance(chk, dict) else chk)
+    expr = re.sub(r'\*\*\s*(\([^()]*\)|[\d.]+)', '', expr)          # powers and roots (**2, **0.25, **(1/3)) are not data
+    stated = {_digits(float(n)) for n in re.findall(NUM, given)}
+    out = [n for n in re.findall(NUM, expr) if not (float(n) in CONSTANTS or abs(float(n) - 3.14159) < 0.01
+                                                     or len(_digits(float(n))) > 2 or _digits(float(n)) in stated)]
+    if not out: return None
+    return (f'the check uses {", ".join(dict.fromkeys(out))}, which the question does not state: if it is data (a modulus, length, limit, '
+            'diameter...), state it in the question text with its unit; if it is derived, write the check from the given values')
 
 
 def block_problems(bs, allowed, path):
     out = []
     for i, b in enumerate(bs):
         p = path + (i,); t = b.get('type')
+        if raw_json(b): out.append((p, 'this block contains raw JSON text instead of content: write it as proper blocks', True)); continue
         if t not in allowed: out.append((p, f'unknown block type {t!r}; use one of {sorted(allowed)}', True))
         elif t in FIELD and not b.get(FIELD[t]): out.append((p, f'a "{t}" block needs a non-empty "{FIELD[t]}" field', True))
         elif t == 'table' and not (b.get('header') and b.get('rows')): out.append((p, 'a table needs "header" and "rows"', True))
         elif t == 'figure' and b.get('kind') not in FIGURE_KINDS: out.append((p, f'figure kind {b.get("kind")!r} does not exist; use one of {sorted(FIGURE_KINDS)}', True))
         elif t == 'example' and not b.get('problem'): out.append((p, 'an example needs a "problem" and a "solution"', True))
         elif t in ('example', 'worked_example') and b.get('check'):
-            m = check_mismatch(b['check'])
+            m = check_mismatch(b['check']) or missing_data(b['check'], json.dumps(b.get('problem') or b.get('text') or '', ensure_ascii=False))
             if m: out.append((p, 'the worked example: ' + m, False))
         if t == 'quick_check' and not all(x.get('q') and x.get('a') for x in b.get('items') or []): out.append((p, 'quick_check items need "q" and "a"', True))
         if isinstance(b.get('blocks'), list): out += [(p, m, h) for _, m, h in block_problems(b['blocks'], allowed, p + ('blocks',))]
@@ -381,6 +433,45 @@ def gate_plan_problems(p):
     return []
 
 
+def _numbers(x):
+    return [float(n) for n in re.findall(r'-?\d+(?:\.\d+)?(?:[eE]-?\d+)?', json.dumps(x, ensure_ascii=False))]
+
+
+def _figures_and_text(parts):
+    """The figures inside an example's problem/solution, and everything else in it."""
+    parts = [p for p in parts if p]
+    figs = [b for p in parts if isinstance(p, list) for b in walk_blocks(p) if b.get('type') == 'figure']
+    rest = [b for p in parts for b in (p if isinstance(p, list) else [p]) if not (isinstance(b, dict) and b.get('type') == 'figure')]
+    return figs, rest
+
+
+def figure_problems(f, path, example_text=None):
+    """A figure that cannot teach anything: data from another example, no axis labels, or a two-node diagram."""
+    spec, kind, out = f.get('spec') or {}, f.get('kind'), []
+    if kind in ('plot', 'bars') and not (spec.get('xlabel') or spec.get('ylabel') or f.get('title') or spec.get('title') or f.get('caption')):
+        out.append((path, f'the {kind} figure has no axis labels, title or caption: label what is plotted, with units', False))
+    if kind == 'graph' and len(spec.get('nodes') or []) < 3:
+        out.append((path, 'a diagram of one or two nodes tells the student nothing: draw what the section needs (a plot, beam, circuit...) or leave it out', False))
+    if example_text is not None:
+        have = [abs(v) for v in _numbers(example_text) if v]
+        data = [abs(v) for v in _numbers(spec) if abs(v) > 10 and v not in CONSTANTS]
+        if len(data) >= 2 and not any(abs(v - h) <= 0.02 * h for v in data for h in have):
+            out.append((path, 'the figure inside this worked example does not use any of the example\'s values: draw it from the example\'s own data', False))
+    return out
+
+
+def example_problems(b, path):
+    """A numerical worked example (it has a "check") that is only a plug-in: almost no working shown. Conceptual examples
+    reason in words and are not counted."""
+    figs, rest = _figures_and_text([b.get('problem'), b.get('solution')])
+    sol = b.get('solution')
+    formulas = sum(1 for x in (sol if isinstance(sol, list) else []) if isinstance(x, dict) and x.get('type') in ('formula', 'table'))
+    if b.get('check') and formulas < 2 and json.dumps(sol, ensure_ascii=False).count('=') < 3:
+        out = [(path, 'the worked example shows almost no working: make it a GATE 2-mark problem solved in 3 or more steps with the intermediate values', False)]
+    else: out = []
+    return out + [p for f in figs for p in figure_problems(f, path, rest)]
+
+
 def gate_notes_problems(out, sections):
     notes = out['notes']
     if len(notes) != len(sections): return [((), f'"notes" must be a list of exactly {len(sections)} sections, in the order given', True)]
@@ -394,6 +485,9 @@ def gate_notes_problems(out, sections):
             probs.append((('notes', i), 'this section needs one GATE-style worked example (an "example" block)', False))
         if s.get('figure') and not any(b.get('type') == 'figure' for b in bl):
             probs.append((('notes', i), f'the plan asks for a figure in this section ({s["figure"][:80]}): add a "figure" block', False))
+        for j, b in enumerate(n['blocks']):          # examples with their figures; figures outside examples on their own
+            if b.get('type') == 'example': probs += example_problems(b, ('notes', i, 'blocks', j))
+            elif b.get('type') == 'figure': probs += figure_problems(b, ('notes', i, 'blocks', j))
     return probs + drawing_problems(out)
 
 
@@ -404,16 +498,23 @@ def _question_paths(msg):
 
 
 def question_checks(q, path):
-    """The answer check of one question: the arithmetic must reproduce the key (NAT) or the number in the correct option (MCQ)."""
+    """The answer check of one question: the arithmetic must reproduce the key (NAT) or the number in the correct option (MCQ),
+    from data the question states. Also: no raw JSON leaked into the question."""
+    if raw_json(q): return [(path, 'this question contains raw JSON text: write it again as a proper question', True)]
+    if q.get('qtype') == 'MSQ' and q.get('options') and all(re.fullmatch(r'\s*[A-D](\s*,\s*[A-D])*\s*', o) for o in q['options']):
+        return [(path, 'an MSQ has the four statements themselves as its options (A) to (D) and its answer is the correct letters ("A, C"): '
+                       'do not list statements in the question and letter combinations as options', True)]
     if not q.get('check'): return []
+    gap = missing_data(q['check'], json.dumps([q.get('question'), q.get('options'), q.get('figure')], ensure_ascii=False))
+    out = [(path, gap, False)] if gap else []
     if q.get('qtype') == 'NAT': m = check_mismatch(q['check'], q.get('answer'), q.get('answer_range'))
     elif q.get('qtype') == 'MCQ' and q.get('options') and re.fullmatch(r'[A-D]', str(q.get('answer', ''))):
         opt = q['options']['ABCD'.index(q['answer'])]
         try: number(opt)
-        except ValueError: return []
+        except ValueError: return out
         m = check_mismatch(q['check'], opt)
-    else: return []
-    return [(path, m, True)] if m else []
+    else: return out
+    return out + ([(path, m, True)] if m else [])
 
 
 def gate_questions_problems(out, paper):
@@ -442,6 +543,7 @@ def nongate_topics_problems(out, n):
     for i, t in enumerate(out['topics']):
         if not t['blocks']: probs.append((('topics', i), 'this topic has no blocks: write it', True)); continue
         probs += block_problems(t['blocks'], NONGATE_BLOCKS, ('topics', i, 'blocks'))
+        probs += [p for j, b in enumerate(t['blocks']) if b.get('type') == 'figure' for p in figure_problems(b, ('topics', i, 'blocks', j))]
         probs += [(item_path(p), m, h) for p, m, h in math_problems(t['blocks'], ('topics', i, 'blocks'))]
     return probs + drawing_problems(out)
 

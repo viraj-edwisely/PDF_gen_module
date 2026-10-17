@@ -23,6 +23,10 @@ def _claude(model, system, user, max_tokens):
     with anthropic.Anthropic(api_key=secret('ANTHROPIC_API_KEY'), max_retries=RETRIES).messages.stream(
             model=model, max_tokens=max_tokens, system=[{'type': 'text', 'text': system, 'cache_control': {'type': 'ephemeral'}}],
             messages=[{'role': 'user', 'content': user}], output_config={'effort': 'medium'}) as stream:
+        sofar = ''
+        for t in stream.text_stream:
+            sofar += t
+            if stuck(sofar): raise LLMError(STUCK.format('Claude'), sofar)
         msg = stream.get_final_message()
     text = ''.join(b.text for b in msg.content if b.type == 'text')
     if msg.stop_reason == 'max_tokens': raise LLMError(CUT_OFF.format('Claude'), text)
@@ -39,6 +43,7 @@ def _openai(model, system, user, max_tokens):
             response_format={'type': 'json_object'}, messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]):
         if ev.choices:
             text += ev.choices[0].delta.content or ''
+            if stuck(text): raise LLMError(STUCK.format('OpenAI'), text)
             if ev.choices[0].finish_reason == 'length': raise LLMError(CUT_OFF.format('OpenAI'), text)
         if ev.usage:
             cached = getattr(ev.usage.prompt_tokens_details, 'cached_tokens', 0) or 0
@@ -69,6 +74,7 @@ def _gemini(model, system, user, max_tokens):
                                           thinking_config=genai.types.ThinkingConfig(thinking_level='medium'))     # Gemini 3: thinking counts towards the output limit and the price
     for ch in _gemini_client().models.generate_content_stream(model=model, contents=user, config=cfg):
         text += ch.text or ''
+        if stuck(text): raise LLMError(STUCK.format('Gemini'), text)
         if ch.candidates and str(ch.candidates[0].finish_reason).endswith('MAX_TOKENS'): raise LLMError(CUT_OFF.format('Gemini'), text)
         if ch.usage_metadata:
             m = ch.usage_metadata; cached = m.cached_content_token_count or 0
@@ -79,13 +85,41 @@ def _gemini(model, system, user, max_tokens):
 CALLS = {'Claude': _claude, 'OpenAI': _openai, 'Gemini': _gemini}
 
 
+# LaTeX commands that start with a letter JSON reads as an escape (\f, \t, \r, \b, \n): "\frac" written with one
+# backslash would silently become a form feed + "rac", "\right" a carriage return + "ight"
+TEX_WORDS = set('frac tfrac theta tau tan tanh times text textbf textrm to top tilde triangle right rightarrow rho rangle rceil rfloor '
+                'beta bar begin binom big bigl bigr bf bullet boldsymbol nu nabla ne neq neg not notin nmid ni nolimits forall flat frown'.split())
+
+
+def fix_escapes(text):
+    """Double the single backslash of LaTeX commands inside JSON text, so they survive json.loads."""
+    def one(m):
+        lead, word = m.group(1), m.group(2)
+        bad = word[0] not in 'bfnrtu' or word in TEX_WORDS or (word[0] == 'u' and not re.match(r'u[0-9a-fA-F]{4}', word))
+        return lead + ('\\\\' if bad else '\\') + word
+    return re.sub(r'(?<!\\)((?:\\\\)*)\\([A-Za-z]+)', one, text)
+
+
+def loads(text):
+    return json.loads(fix_escapes(text))
+
+
 def parse_json(text):
-    """Pull the JSON object out of a reply, tolerating code fences and a sentence before or after it."""
+    """Pull the JSON object out of a reply, tolerating code fences, a sentence before or after it, and LaTeX with single backslashes."""
     text = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.M).strip().replace('\\u0000', '')    # a NUL character cannot be stored in the database
     a, b = text.find('{'), text.rfind('}')
     if a < 0 or b < a: raise LLMError('the model did not return a JSON object', text)
-    try: return json.loads(text[a:b + 1])
+    try: return loads(text[a:b + 1])
     except json.JSONDecodeError as e: raise LLMError(f'the model returned invalid JSON: {e}', text)
+
+
+def stuck(text):
+    """True when the reply has started repeating a few characters over and over (e.g. "}]}]}]..."): it would run to the length limit."""
+    tail = text[-400:]
+    return len(tail) == 400 and any(tail[n:] == tail[:-n] for n in range(1, 9))
+
+
+STUCK = '{} reply got stuck repeating the same characters; write each item once, as compact JSON'
 
 
 def generate_json(provider, system, user, max_tokens=None):

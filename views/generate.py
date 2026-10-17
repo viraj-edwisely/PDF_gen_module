@@ -104,8 +104,10 @@ if mode == 'gate':
     options['subject'] = c2.text_input('Subject', key='subject', placeholder='e.g. Computer Organization and Architecture').strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the writer writes one if empty)').strip()
     has_verifier = bool(secret(PROVIDERS[VERIFY_PROVIDER]['key']))
-    options['verify'] = st.toggle('Double-check answers with a second model', value=False,
-                                  help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example; disputed items go back to the writer once. Adds about $0.05-0.10 per PDF.")
+    options['verify'] = st.toggle('Second check: answers and teaching quality', value=False,
+                                  help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example, and flags examples, figures and "
+                                       "questions that do not teach (one-line examples, decorative or mismatched figures, recall questions). Those go back to "
+                                       "the writer once, with a note for you. Adds about $0.10-0.20 per PDF.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()
     c1, c2 = st.columns(2)
@@ -122,7 +124,8 @@ context = scope_tokens if scope_tokens <= SCOPE_TOKEN_BUDGET else TOPIC_TOKEN_BU
 calls, out_tokens = (4, 40_000) if mode == 'gate' else (2 + -(-n // 3), 9_000 * n + 12_000)    # GATE: plan, 2 notes, questions; Non-GATE: plan, topics in threes, end matter
 estimate = 1.15 * cost(provider, calls * (context + 15_000), out_tokens) * (n if mode == 'gate' else 1)     # +15% for repairs
 if mode == 'gate' and options.get('verify'):
-    estimate += n * cost(VERIFY_PROVIDER if secret(PROVIDERS[VERIFY_PROVIDER]['key']) else provider, 20_000, 3_000)
+    estimate += n * (cost(VERIFY_PROVIDER if secret(PROVIDERS[VERIFY_PROVIDER]['key']) else provider, 25_000, 4_000)    # the review
+                     + cost(provider, 30_000, 10_000))                                                                  # fixing what it found
 minutes = (-(-n // TOPIC_PARALLEL) * 10) if mode == 'gate' else 12
 
 errors = []

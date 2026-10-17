@@ -29,6 +29,7 @@ The example "title" is the topic of the example only ("Relative branch target"),
 There are no image blocks: every picture is a `figure` the app draws.
 
 ## "check": how the app verifies numbers
+Write the check from the values given in the problem or question (never from rounded intermediate values), with exact constants (2*pi*N/60, not 9550). Every value it uses must be stated in the problem or question text.
 A worked example with a numeric result, and every NAT question, carry a "check":
 - example: "check": {"expr": "0x3000 - 0x1F4", "answer": "0x2E0C"}   (answer = the final result as written in the solution)
 - NAT question: "check": "0.40*ceil(1.05/0.40)"   (must give the "answer", within "answer_range")

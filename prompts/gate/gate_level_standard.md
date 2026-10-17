@@ -42,8 +42,8 @@ partial UDL", "eigenvalues of a triangular matrix"). The notes must equip the st
 archetype, plus the obvious neighbours GATE has not yet asked.
 
 Per GATE-testable idea, one numbered section with:
-1. **Rule / definition** in one or two sentences, then the **type or condition** (e.g. "Type: pre-emptive",
-   "Valid only for linear elastic material").
+1. **Rule / definition** in one or two sentences, then when it applies (pre-emptive or not, valid only for a
+   linear elastic material...), written as plain sentences without labels such as "Type:".
 2. **The formula or method as GATE uses it**, with symbols defined and units.
 3. **Why it works / when it fails**, only as far as it changes an answer (optimality, limiting cases,
    assumptions GATE questions quietly rely on).
@@ -61,7 +61,7 @@ Depth guardrails:
   examples that are plug-in with one step; no figures for a visual/numerical topic.
 - Too deep (cut): research-level proofs, topics outside the official syllabus line, exotic variants
   never asked in GATE (if a variant is genuinely examinable, keep it to a short paragraph).
-- Typical size: 4-12 sections, 8-15 worked examples, 6-20 figures, 10-18 pages per topic.
+- Typical size: 4-12 sections, one worked example per section, a figure in most sections, 10-18 pages per topic.
   Small topics (e.g. a single aptitude idea) can be shorter but still need ≥ 3 worked examples.
 
 ## 3. Questions: types, phrasing, difficulty
@@ -98,8 +98,8 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
   question has a `figure` and the stem says "shown in the figure".
 
 ## 4. Answer key conventions
-- MCQ/MSQ: letters ("B", "A, C"). NAT: the value plus `answer_range` (exact for integers, ±1 in the
-  last stated decimal place otherwise, wider only when rounding of intermediate values is reasonable).
+- MCQ/MSQ: letters ("B", "A, C"). NAT: the value plus `answer_range` (exact for integers; otherwise wide enough
+  to accept the usual approximations, such as 9550 for 60000/2π or π = 3.14, and the rounding of intermediate values).
 - Every solution shows the working a student should write in 2-4 lines, with the key figure or
   table (`solution_figure`) when it is the fastest route, and for MCQ says why the tempting
   distractor is wrong when that is the point of the question.

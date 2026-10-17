@@ -13,7 +13,14 @@ from config import PARALLEL, PROVIDERS, VERIFY_PROVIDER, secret
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = C.RENDER
 UNCHECKED_NOTE = 'Answer keys were not re-checked by a second model: check them before publishing.'
+REPAIR_TOKENS = 32_000    # a repair rewrites a few items: a longer reply means the model has lost its way
 RETRY = '\n\nYour previous reply could not be used: {problems}\nReturn the complete JSON again, in exactly the format asked for.'
+
+
+def same_kind(old, new):
+    """A fix must have the shape of the item it replaces (a block stays an object, a list a list), never JSON written as text."""
+    if old is None: return isinstance(new, (dict, list))
+    return isinstance(new, dict) if isinstance(old, dict) else isinstance(new, list) if isinstance(old, list) else not isinstance(new, (dict, list))
 
 
 class CapReached(Exception): pass
@@ -99,8 +106,8 @@ class Job:
             self.save(name, out, {'in': 0, 'out': 0, 'cost': 0})
         return out
 
-    def _call(self, prompt, usage, provider=None):
-        out, u, raw = llm.generate_json(provider or self.provider, self.system, prompt)
+    def _call(self, prompt, usage, provider=None, max_tokens=None):
+        out, u, raw = llm.generate_json(provider or self.provider, self.system, prompt, max_tokens)
         for k in usage: usage[k] += u[k]
         return out, raw
 
@@ -113,11 +120,11 @@ class Job:
             except (KeyError, IndexError, TypeError): return None
         items = [{'ref': C.ref(p), 'problems': ms, 'current': current(p)} for p, ms in by_path.items()]
         self.log(f'{name}: sending {len(items)} item(s) back for repair: ' + '; '.join(f"{C.label(p, out)}: {ms[0][:80]}" for p, ms in list(by_path.items())[:3]))
-        try: reply, _ = self._call(fill(read('repair.md'), ITEMS=json.dumps(items, ensure_ascii=False)), usage, provider)
+        try: reply, _ = self._call(fill(read('repair.md'), ITEMS=json.dumps(items, ensure_ascii=False)), usage, provider, REPAIR_TOKENS)
         except llm.LLMError as e: self.log(f'{name}: the repair call failed: {e}'); return out
         for f in (reply.get('fixes') if isinstance(reply, dict) else None) or []:
             p = C.unref(f.get('ref', '')) if isinstance(f, dict) else None
-            if p in by_path and 'value' in f:
+            if p in by_path and 'value' in f and same_kind(current(p), f['value']):
                 try: C.put(out, p, f['value'])
                 except (KeyError, IndexError, TypeError): pass
         return tidy(out)
@@ -227,22 +234,41 @@ def pyq_step(job, topic, o):
     return kept
 
 
+def figure_brief(f):
+    """A figure as the reviewer sees it: its kind, title, caption and the labels and values it shows."""
+    words = [w for w in re.findall(r'"([^"]{1,40})"', json.dumps(f.get('spec') or {}, ensure_ascii=False))
+             if w not in ('x', 'y', 'label', 'text', 'curves', 'points', 'nodes', 'edges', 'id', 'fill', 'kind', 'shape', 'color', 'style')]
+    return {'kind': f.get('kind'), 'title': f.get('title'), 'caption': f.get('caption'), 'shows': ', '.join(dict.fromkeys(words))[:300],
+            'values': [round(v, 4) for v in C._numbers(f.get('spec'))][:40]}
+
+
 def verify(job, topic, o, notes, q):
-    """A second model re-solves every question and worked example; the items it disputes go back to the writer once."""
+    """A second model re-solves every question and worked example and reviews whether examples, figures and questions
+    teach; the items it disputes or finds weak go back to the writer once."""
     provider = VERIFY_PROVIDER if secret(PROVIDERS[VERIFY_PROVIDER]['key']) else job.provider
     fields = ('qtype', 'question', 'options', 'answer', 'answer_range', 'solution')
     items = [{'ref': C.ref(('practice', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['practice'])]
     items += [{'ref': C.ref(('sample_paper', 'questions', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['sample_paper']['questions'])]
-    items += [{'ref': C.ref(('notes', i, 'blocks', j)), 'worked_example': b.get('problem'), 'solution': b.get('solution')}
-              for i, n in enumerate(notes) for j, b in enumerate(n['blocks']) if b.get('type') == 'example']
+    for i, n in enumerate(notes):
+        for j, b in enumerate(n['blocks']):
+            if b.get('type') == 'example':
+                figs, rest = C._figures_and_text([b.get('problem'), b.get('solution')])
+                items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'worked_example': rest[:1], 'solution': rest[1:],
+                              'figures': [figure_brief(f) for f in figs]})
+            elif b.get('type') == 'figure':
+                items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'figure': figure_brief(b)})
     valid = {x['ref'] for x in items}
-    tidy = lambda out: {'issues': [i for i in (out.get('issues') if isinstance(out, dict) else None) or [] if isinstance(i, dict) and i.get('ref') in valid]}
-    issues = job.ask('verify', fill(read('gate/verify.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], ITEMS=json.dumps(items, ensure_ascii=False)),
-                     tidy=tidy, provider=provider)['issues']
-    job.log(f'Second check ({provider}): {len(issues)} of {len(items)} items disputed')
-    if not issues: return notes, q
+    keep = lambda out, k: [i for i in (out.get(k) if isinstance(out, dict) else None) or [] if isinstance(i, dict) and i.get('ref') in valid]
+    tidy = lambda out: {'issues': keep(out, 'issues'), 'weak': keep(out, 'weak')[:6]}
+    found = job.ask('verify', fill(read('gate/verify.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], ITEMS=json.dumps(items, ensure_ascii=False)),
+                    tidy=tidy, provider=provider)
+    issues, weak = found['issues'], found.get('weak', [])
+    job.log(f'Second check ({provider}): {len(issues)} of {len(items)} items disputed, {len(weak)} found weak')
+    if not issues and not weak: return notes, q
     obj = {'notes': notes, **q}
     probs = [(C.unref(i['ref']), f"a second check found a mistake: {str(i.get('problem', ''))[:300]}" + (f" (it gets: {i['correct']})" if i.get('correct') else ''), False) for i in issues]
+    probs += [(C.unref(w['ref']), f"a quality review found this item does not teach well: {str(w.get('problem', ''))[:300]}. Rewrite it to fix that, keeping it correct", False)
+              for w in weak if w['ref'] not in {i['ref'] for i in issues}]
     def describe(fixed):
         for i in issues:
             p = C.unref(i['ref'])
@@ -252,6 +278,11 @@ def verify(job, topic, o, notes, q):
             if p[0] == 'notes': job.warn(f'{C.label(p, fixed)}: the worked example was revised after a second check found a mistake ({why}). Please review it.')
             elif before.get('answer') != after.get('answer'): job.warn(f"{C.label(p)}: answer changed from {before.get('answer')} to {after.get('answer')} after a second check. Please review it.")
             else: job.warn(f"{C.label(p)}: a second check disagreed ({why}), but the writer kept the answer {after.get('answer')}. Please check it.")
+        for w in weak:
+            p = C.unref(w['ref'])
+            try: changed = C.get(obj, p) != C.get(fixed, p)
+            except (KeyError, IndexError, TypeError): continue
+            job.warn(f"{C.label(p, fixed)}: {'rewritten' if changed else 'kept as it was'} after a quality review ({str(w.get('problem', ''))[:140]}).")
     fixed = job.revise('verify_fix', obj, probs, lambda x: {**C.gate_notes(x), **C.gate_questions(x)}, lambda x: C.gate_questions_problems(x, o['paper']), describe)
     return fixed['notes'], {k: fixed[k] for k in ('practice', 'sample_paper', 'traps', 'revision_card')}
 

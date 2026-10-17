@@ -44,6 +44,8 @@ pip install -r requirements.txt
 # put the secrets in .streamlit/secrets.toml
 streamlit run streamlit_app.py
 python -m pytest tests        # offline checks of the content rules and the renderers (pip install pytest)
+python tests/stress_pdf.py stress.pdf    # after a renderer change: every formula style and figure kind in one PDF, to look at
+python tools/eval.py start | score NAME | compare A B   # measure PDF quality on 8 fixed topics before and after a prompt change (costs model calls)
 ```
 
 ## How it works (short)

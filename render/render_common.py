@@ -20,6 +20,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import figures as FIG
+import tex as TEX
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, 'assets', 'fonts')
@@ -37,38 +38,30 @@ S = {
     'title': ParagraphStyle('t', fontName='Head', fontSize=26, leading=31, textColor=colors.white),
     'kicker': ParagraphStyle('k', fontName='HeadM', fontSize=9, leading=12, textColor=colors.white),
     'sub': ParagraphStyle('s', fontName='HeadR', fontSize=11.5, leading=15, textColor=colors.white),
-    'h1': ParagraphStyle('h1', fontName='Head', fontSize=17, leading=22, textColor=PURPLE, spaceBefore=10, spaceAfter=6),
-    'h2': ParagraphStyle('h2', fontName='Head', fontSize=12.5, leading=16, textColor=INK, spaceBefore=8, spaceAfter=4),
+    'h1': ParagraphStyle('h1', fontName='Head', fontSize=17, leading=22, textColor=PURPLE, spaceBefore=10, spaceAfter=6, keepWithNext=1),
+    'h2': ParagraphStyle('h2', fontName='Head', fontSize=12.5, leading=16, textColor=INK, spaceBefore=8, spaceAfter=4, keepWithNext=1),
     'body': ParagraphStyle('b', fontName='Body', fontSize=9.6, leading=14, textColor=INK, spaceAfter=5, autoLeading='max'),
-    'small': ParagraphStyle('sm', fontName='Body', fontSize=8, leading=11, textColor=GREY),
-    'cell': ParagraphStyle('c', fontName='Body', fontSize=8.8, leading=12, textColor=INK),
-    'cellh': ParagraphStyle('ch', fontName='HeadM', fontSize=8.8, leading=12, textColor=colors.white),
+    'small': ParagraphStyle('sm', fontName='Body', fontSize=8, leading=11, textColor=GREY, autoLeading='max'),
+    'cell': ParagraphStyle('c', fontName='Body', fontSize=8.8, leading=12, textColor=INK, autoLeading='max'),
+    'cellh': ParagraphStyle('ch', fontName='HeadM', fontSize=8.8, leading=12, textColor=colors.white, autoLeading='max'),
     'callout': ParagraphStyle('co', fontName='Body', fontSize=9.6, leading=14, textColor=colors.white, autoLeading='max'),
-    'tag': ParagraphStyle('tg', fontName='HeadM', fontSize=7.8, leading=10, textColor=INK),
+    'tag': ParagraphStyle('tg', fontName='HeadM', fontSize=7.8, leading=10, textColor=INK, autoLeading='max'),
     'mono': ParagraphStyle('m', fontName='Mono', fontSize=8.4, leading=11.5, textColor=INK),
-    'subhead': ParagraphStyle('sh', fontName='BodyB', fontSize=9.6, leading=14, textColor=INK, spaceBefore=2, spaceAfter=3),
-    'boxtitle': ParagraphStyle('bt', fontName='Head', fontSize=10, leading=14, textColor=PURPLE, spaceAfter=2),
-    'figtitle': ParagraphStyle('ft', fontName='HeadM', fontSize=10, leading=13, textColor=PURPLE, spaceBefore=4, spaceAfter=2),
-    'cellb': ParagraphStyle('cb', fontName='BodyB', fontSize=8.8, leading=12, textColor=INK),
+    'subhead': ParagraphStyle('sh', fontName='BodyB', fontSize=9.6, leading=14, textColor=INK, spaceBefore=2, spaceAfter=3, autoLeading='max', keepWithNext=1),
+    'boxtitle': ParagraphStyle('bt', fontName='Head', fontSize=10, leading=14, textColor=PURPLE, spaceAfter=2, autoLeading='max', keepWithNext=1),
+    'figtitle': ParagraphStyle('ft', fontName='HeadM', fontSize=10, leading=13, textColor=PURPLE, spaceBefore=4, spaceAfter=2, keepWithNext=1),
+    'cellb': ParagraphStyle('cb', fontName='BodyB', fontSize=8.8, leading=12, textColor=INK, autoLeading='max'),
 }
 TW = W - 2 * M          # text width
 INNER = TW - 22          # width inside a box (bar + paddings)
 MATHDIR = os.path.join(tempfile.gettempdir(), 'topicpdf_math'); os.makedirs(MATHDIR, exist_ok=True)
 
 
-# LaTeX commands that matplotlib's mathtext does not know, and what to draw instead
-TEX_FIXES = {r'\land': r'\wedge', r'\lor': r'\vee', r'\lnot': r'\neg', r'\implies': r'\Rightarrow', r'\iff': r'\Leftrightarrow', r'\le': r'\leq', r'\ge': r'\geq',
-             r'\ne': r'\neq', r'\dfrac': r'\frac', r'\tfrac': r'\frac', r'\text': r'\mathrm', r'\textrm': r'\mathrm', r'\operatorname': r'\mathrm', r'\dots': r'\ldots',
-             r'\bmod': r'\ \mathrm{mod}\ ', r'\pmod': r'\ \mathrm{mod}\ '}
-
-
-def normalize_tex(tex):
-    tex = re.sub(r'\\[A-Za-z]+', lambda m: TEX_FIXES.get(m.group(0), m.group(0)), tex)
-    return re.sub(r'\\mathrm\{([^{}]*)\}', lambda m: '\\mathrm{' + re.sub(r'(?<!\\) ', lambda _: '\\ ', m.group(1)) + '}', tex)     # mathtext drops spaces inside \mathrm
+normalize_tex = TEX.normalize      # LaTeX that mathtext cannot draw, rewritten into what it can (render/tex.py)
 
 
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
-    tex = normalize_tex(tex)
+    tex = TEX.normalize(tex) if display else TEX.inline(tex)
     key = hashlib.md5(f'{tex}|{size}|{display}|{color}'.encode()).hexdigest()
     fn = os.path.join(MATHDIR, key + '.png')
     if not os.path.exists(fn):
@@ -96,22 +89,27 @@ def tex_text(tex):
     return re.sub(r'\s+', ' ', t.replace('{', '').replace('}', '')).strip()
 
 
-def rich(text, size=10.5, color='#1F1A2E'):
-    """**bold**, *italic*, $math$ -> reportlab markup."""
-    out = []
+def rich(text, size=10.5, color='#1F1A2E', max_w=None):
+    """**bold**, *italic*, $math$ -> reportlab markup. max_w: maths wider than this (a table cell) is scaled down to fit."""
+    out, bold = [], False                     # **bold** may contain $maths$, so its state runs across the pieces
     for i, part in enumerate(re.split(r'(?<!\\)\$(.+?)(?<!\\)\$', text or '', flags=re.S)):
         if i % 2:
             part = ' '.join(part.split())                        # maths written over several lines
             try:
                 fn, w, h = math_img(part, size, False, color)
+                if max_w and w > max_w: w, h = max_w, h * max_w / w
                 out.append(f'<img src="{fn}" width="{w:.1f}" height="{h:.1f}" valign="{-h * 0.28:.1f}"/>')
             except Exception:
                 out.append(html.escape(tex_text(part)))
         else:
             t = html.escape(part.replace('\\$', '$'))
-            t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t); t = re.sub(r'(?<!\*)\*(?!\*)(.+?)\*', r'<i>\1</i>', t)
+            pieces = t.split('**'); t = pieces[0]
+            for piece in pieces[1:]:
+                bold = not bold; t += ('<b>' if bold else '</b>') + piece
+            t = re.sub(r'(?<!\*)\*(?!\*)(.+?)\*', r'<i>\1</i>', t)
+            t = re.sub(r'`([^`]+)`', r'<font name="Mono">\1</font>', t)          # `code` in running text
             out.append(t.replace('\n', '<br/>'))
-    return ''.join(out)
+    return ''.join(out) + ('</b>' if bold else '')
 
 
 def fit(text, font, size, width):
@@ -125,7 +123,7 @@ def P(text, style='body'): return Paragraph(rich(text), S[style])
 
 
 def keep(flow):
-    flow._keep_next = True; return flow
+    flow._keep_next = True; flow.keepWithNext = True; return flow      # _keep_next inside box(), keepWithNext on the page
 
 
 def styled_table(header, rows, widths=None, total_row=False, avail=None):
@@ -138,8 +136,8 @@ def styled_table(header, rows, widths=None, total_row=False, avail=None):
     for i, r in enumerate(rows):
         r = (list(r) + [''] * n)[:n]                     # every row as wide as the header
         st_ = S['cellb'] if total_row and i == len(rows) - 1 else S['cell']
-        body.append([Paragraph(rich('' if c is None else str(c)), st_) for c in r])
-    data = [[Paragraph(rich(h, color='#FFFFFF'), S['cellh']) for h in header]] + body
+        body.append([Paragraph(rich('' if c is None else str(c), max_w=w - 12), st_) for c, w in zip(r, widths)])
+    data = [[Paragraph(rich(h, color='#FFFFFF', max_w=w - 12), S['cellh']) for h, w in zip(header, widths)]] + body
     t = Table(data, colWidths=widths, repeatRows=1)
     st = [('BACKGROUND', (0, 0), (-1, 0), PURPLE), ('GRID', (0, 0), (-1, -1), 0.5, LINE),
           ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
@@ -180,7 +178,7 @@ def image(path, maxw=None, maxh=115 * mm, width=None, align='CENTER'):
     maxw = maxw or TW
     pi = PI.open(path); w, h = pi.size; dpi = (pi.info.get('dpi') or (150, 150))[0] or 150
     nat_w, nat_h = w * 72 / dpi, h * 72 / dpi
-    if width: sc = maxw * float(width) / nat_w
+    if width: sc = min(maxw * float(width) / nat_w, 1.15)      # never blow a small drawing up: its text would grow with it
     else: sc = min(1.0, maxw / nat_w)
     sc = min(sc, maxh / nat_h) if nat_h * sc > maxh else sc
     im = Image(path, nat_w * sc, nat_h * sc); im.hAlign = align; return im
@@ -236,13 +234,16 @@ def block(b, avail):
             out.append(Paragraph(rich(it), ParagraphStyle('nl', parent=S['body'], leftIndent=14, bulletIndent=0),
                                  bulletText=f'{k}.'))
     elif t == 'formula':
-        try:
-            fn, w, h = math_img(b['latex'], 11, True)
-            if w > avail: h, w = h * avail / w, avail
-            im = Image(fn, w, h); im.hAlign = 'CENTER'
-            out += [Spacer(1, 3), im, Spacer(1, 5)]
-        except Exception:       # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
-            out.append(Paragraph(html.escape(tex_text(b['latex'])), S['body']))
+        out.append(Spacer(1, 3))
+        for line in TEX.lines(b['latex']):      # rows of align/aligned, or rows split by \\, each on its own line
+            try:
+                fn, w, h = math_img(line, 11, True)
+                if w > avail: h, w = h * avail / w, avail
+                im = Image(fn, w, h); im.hAlign = 'CENTER'
+                out += [im, Spacer(1, 2)]
+            except Exception:   # a formula the maths renderer cannot draw is shown as plain text instead of stopping the PDF
+                out.append(Paragraph(html.escape(tex_text(line)), S['body']))
+        out.append(Spacer(1, 3))
     elif t == 'table':
         out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
     elif t == 'code':

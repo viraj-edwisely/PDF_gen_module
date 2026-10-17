@@ -5,7 +5,8 @@ Each item has a "ref" (where it sits in the JSON), the "problems" found, and its
 
 Return this JSON: {"fixes": [{"ref": "<the same ref>", "value": <the complete corrected item>}]}, one entry per item above.
 Rules
-- "value" replaces the whole item, in the same format as the current one (a block stays a block of the same kind, a question stays a question, a list stays a list).
+- "value" replaces the whole item, in the same format as the current one (a block stays a block of the same kind, a question stays a question, a list stays a list). It is JSON itself, never JSON written inside a string.
+- Write each fix once, as compact JSON, and stop after the last one.
 - Fix every problem listed for the item and keep everything else as it was.
 - When a problem is about a number or an answer, solve the problem again from the start, step by step, and make the working, the answer, the answer range and the "check" expression agree.
 - When an item is missing (current is null), write it.
