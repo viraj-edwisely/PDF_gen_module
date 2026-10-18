@@ -7,6 +7,7 @@ from llm import embed
 
 CHUNK_CHARS = 2400   # about 600 tokens
 UNIT_LINE = re.compile(r'^\s*((?:unit|chapter|module|part)\s*[\dIVX]+\b.*?)[\s.\u2026·\-]*?(\d{1,4})\s*$', re.I)
+LABEL = re.compile(r'(?i)(example|solution|answer|problem|exercise|note|figure|fig\.|table|definition|theorem|proof|step)\b')
 HEADING = re.compile(r'^(\d+(\.\d+)*[.)]?\s+\S.{2,70}|[A-Z][A-Za-z0-9 ,:&\-()\']{2,70})$')
 
 
@@ -14,11 +15,14 @@ def extract_pages(doc):
     """(text per page, page offset). Paragraphs are separated by blank lines and headers/footers repeated on many pages
     are dropped. The offset is pdf_page - printed_page, voted from page numbers standing alone at the top or bottom."""
     raw = [[re.sub(r'-\n(?=[a-z])', '', b[4].replace('\x00', '')).replace('\n', ' ').strip() for b in p.get_text('blocks') if b[6] == 0] for p in doc]
-    votes = collections.Counter(i - int(b) for i, blocks in enumerate(raw, 1) for b in blocks[:1] + blocks[-1:] if b.isdigit() and int(b) < i + 50)
+    page_no = lambda b: b.isdecimal() and len(b) <= 4                 # isdecimal: not superscripts or circled digits (int() refuses them)
+    votes = collections.Counter(i - int(b) for i, blocks in enumerate(raw, 1) for b in blocks[:1] + blocks[-1:] if page_no(b) and int(b) < i + 50)
     offset = votes.most_common(1)[0][0] if votes and votes.most_common(1)[0][1] >= 5 else 0
-    seen = collections.Counter(k for blocks in raw for k in {re.sub(r'\d+', '#', b) for b in blocks if len(b) < 100})
-    common = {k for k, n in seen.items() if n > max(3, 0.3 * len(raw))}
-    return ['\n\n'.join(b for b in blocks if b and not (len(b) < 100 and re.sub(r'\d+', '#', b) in common)) for blocks in raw], offset
+    edge = lambda blocks: set(range(min(2, len(blocks)))) | set(range(max(0, len(blocks) - 2), len(blocks)))   # headers and footers sit here
+    key = lambda b: '' if LABEL.match(b) else re.sub(r'\d+', '#', b)       # "Example 3.1", "Solution": content, never a running header
+    seen = collections.Counter(k for blocks in raw for k in {key(blocks[j]) for j in edge(blocks) if len(blocks[j]) < 100})
+    common = {k for k, n in seen.items() if k and n > max(3, 0.3 * len(raw))}
+    return ['\n\n'.join(b for j, b in enumerate(blocks) if b and not (j in edge(blocks) and len(b) < 100 and key(b) in common)) for blocks in raw], offset
 
 
 def detect_units(doc, pages, offset):
@@ -26,12 +30,16 @@ def detect_units(doc, pages, offset):
     found = [(t.strip(), p - offset) for lvl, t, p in doc.get_toc() if lvl == 1 and p > 0]
     if len(found) < 2:
         found = []
-        for t in pages[:30]:
-            for line in t.replace('\n\n', '\n').split('\n'):
+        for page in list(doc)[:30]:                  # the page's own lines: a contents page is often one text block
+            for line in page.get_text().split('\n'):
                 m = UNIT_LINE.match(line)
                 if m: found.append((re.sub(r'[\s.\u2026]+$', '', m.group(1)), int(m.group(2))))
-    if len(found) < 2: return []
     last = len(pages) - offset
+    starts = {}                                      # in page order, one unit per start page, front matter (before page 1) left out
+    for n, s in sorted(found, key=lambda u: u[1]):
+        if 1 <= s <= last: starts.setdefault(s, n)
+    found = [(n, s) for s, n in starts.items()]
+    if len(found) < 2: return []
     return [(n, s, (found[i + 1][1] - 1 if i + 1 < len(found) else last)) for i, (n, s) in enumerate(found)]
 
 

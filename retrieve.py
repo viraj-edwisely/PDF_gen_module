@@ -16,7 +16,7 @@ def topic_context(book, start, end, topic, sections=()):
     if not book: return {'text': '', 'found': False, 'whole_scope': False}      # runs without a book
     off, bid = book['page_offset'], book['id']
     a, b = start + off, end + off
-    scope = 'book_id=%s and page_start between %s and %s'
+    scope = 'book_id=%s and page_end >= %s and page_start <= %s'      # chunks overlapping the scope (a one-page scope may sit inside one chunk)
     queries = [topic, *sections]
     ranked, best = [], 0
     for q, qv in zip(queries, map(vec, embed(queries))):

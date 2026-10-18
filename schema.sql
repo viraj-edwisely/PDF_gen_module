@@ -16,7 +16,7 @@ create table if not exists chunks (                -- page numbers are PDF pages
   id bigserial primary key, book_id bigint references books on delete cascade,
   page_start int, page_end int, heading text, text text, embedding vector(1536),
   tsv tsvector generated always as (to_tsvector('english', text)) stored);
-create index if not exists chunks_embedding on chunks using hnsw (embedding vector_cosine_ops);
+drop index if exists chunks_embedding;   -- an HNSW index scans the whole library before the book filter and returned too few chunks; one book is small enough for an exact scan
 create index if not exists chunks_tsv on chunks using gin (tsv);
 create index if not exists chunks_book_page on chunks (book_id, page_start);
 
@@ -48,6 +48,11 @@ create table if not exists events (                -- usage per person (Usage pa
   id bigserial primary key, at timestamptz default now(), email text, action text, run_id bigint, cost_usd numeric default 0, detail jsonb default '{}');
 create index if not exists events_at on events (at);
 
+-- added after the first release (safe to repeat); before the carry-over below, which reads runs.title
+alter table runs add column if not exists title text;                          -- the topic names, for the run list
+alter table books add column if not exists progress real default 0;            -- background processing of uploads
+alter table books add column if not exists step text;
+
 do $$ begin
   if not exists (select 1 from events) then        -- first start with usage tracking: carry over the existing runs
     insert into events (at, email, action, run_id, detail)
@@ -59,11 +64,6 @@ do $$ begin
       from run_topics t join runs r on r.id = t.run_id where t.pdf_path is not null or t.status = 'failed';
   end if;
 end $$;
-
--- added after the first release (safe to repeat)
-alter table runs add column if not exists title text;                          -- the topic names, for the run list
-alter table books add column if not exists progress real default 0;            -- background processing of uploads
-alter table books add column if not exists step text;
 
 -- the app connects with its own database credentials; nothing is readable through Supabase's public API
 alter table books enable row level security;   alter table pages enable row level security;

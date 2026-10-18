@@ -9,7 +9,7 @@ A problem is (path, message, hard):
 - hard=True          the item is broken and is dropped if the repair does not fix it;
 - hard=False         a requirement (a missing worked example or figure, a wrong answer check): kept, with a warning.
 """
-import difflib, json, os, re, subprocess, sys, tempfile
+import difflib, json, math, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = os.path.join(HERE, 'render')
@@ -24,7 +24,7 @@ NONGATE_BLOCKS = {'situation', 'concept', 'worked_example', 'pitfall', 'note', '
 FIGURE_KINDS = {'gantt', 'timeline', 'plot', 'bars', 'graph', 'cells', 'beam', 'circuit'}
 FIELD = {'para': 'text', 'subhead': 'text', 'bullets': 'items', 'numbered': 'items', 'formula': 'latex', 'code': 'text', 'callout': 'text',
          'trap': 'text', 'situation': 'text', 'concept': 'text', 'pitfall': 'text', 'worked_example': 'text', 'quick_check': 'items'}
-ALIASES = {'text': ('content', 'body', 'value', 'paragraph', 'description', 'statement'), 'items': ('list', 'points', 'bullets', 'steps', 'entries', 'questions'),
+ALIASES = {'text': ('content', 'body', 'value', 'paragraph', 'description', 'statement', 'code'), 'items': ('list', 'points', 'bullets', 'steps', 'entries', 'questions'),
            'latex': ('formula', 'expression', 'equation', 'tex', 'math', 'text'), 'header': ('headers', 'columns', 'head'), 'rows': ('data', 'body', 'cells'),
            'problem': ('question', 'statement', 'text', 'given'), 'solution': ('answer', 'working', 'steps', 'explanation')}
 TYPE_ALIASES = {'paragraph': 'para', 'text': 'para', 'heading': 'subhead', 'subheading': 'subhead', 'list': 'bullets', 'bullet': 'bullets',
@@ -51,7 +51,7 @@ def put(obj, path, value):
 
 def drop(obj, paths):
     """Remove the items at these paths (later list indexes first, so earlier ones stay valid)."""
-    for path in sorted(set(map(tuple, paths)), key=lambda p: [(-x if isinstance(x, int) else 0) for x in p]):
+    for path in sorted(set(map(tuple, paths)), key=lambda p: [(-x if isinstance(x, int) else 0) for x in p] + [1]):   # + [1]: inner paths first
         try:
             parent = get(obj, path[:-1])
             if isinstance(parent, list): del parent[path[-1]]
@@ -62,6 +62,7 @@ def drop(obj, paths):
 def item_path(path):
     """The repairable item that contains `path`: ['notes', 0, 'blocks', 3, 'problem', 1] -> ('notes', 0, 'blocks', 3)."""
     path = list(path)
+    if not path: return ()
     for i in range(len(path) - 1):
         if path[i] in CONTAINERS and isinstance(path[i + 1], int) and path[i] not in ('notes', 'topics'):
             return tuple(path[:i + 2])
@@ -92,10 +93,13 @@ def clean(x):
     \\u0024 or \\u00bd that a model wrote out as text (double-escaped) back to their characters; \\( \\) and \\[ \\] maths to $...$."""
     if isinstance(x, str):
         x = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), x.replace('\x00', ''))
+        x = x.encode('utf-16', 'surrogatepass').decode('utf-16', 'replace')     # a pair written as two escapes becomes one character
         x = re.sub(r'(?<!\\)\\\((.+?)(?<!\\)\\\)|(?<!\\)\\\[(.+?)(?<!\\)\\\]', lambda m: '$' + (m.group(1) or m.group(2)).strip() + '$', x, flags=re.S)
         return re.sub(r'\bGATE\s*20\d\d\b', 'GATE', x.replace('\x00', ''))
     if isinstance(x, list): return [clean(v) for v in x]
-    if isinstance(x, dict): return {k: clean(v) if k != 'source' else v for k, v in x.items()}
+    if isinstance(x, dict):
+        if x.get('type') == 'code': return {k: v.replace('\x00', '') if isinstance(v, str) else v for k, v in x.items()}    # code as written
+        return {k: clean(v) if k != 'source' else v for k, v in x.items()}
     return x
 
 
@@ -104,6 +108,28 @@ def _alias(d, field):
         for a in ALIASES.get(field, ()):
             if d.get(a) not in (None, '', []): d[field] = d.pop(a); break
     return d
+
+
+def _list(x):
+    """A list from whatever the model put where a list belongs: a list, a dict keyed 0, 1, 2 or A, B, C, a JSON list
+    written as a string, a single item, or nothing."""
+    if isinstance(x, list): return x
+    if x is None or x == '' or x == {}: return []
+    if isinstance(x, str) and x.strip().startswith('['):
+        try: v = loads(x)
+        except ValueError: v = None
+        if isinstance(v, list): return v
+    if isinstance(x, dict) and all(re.fullmatch(r'\d+|[A-Za-z]', str(k)) for k in x):
+        return [x[k] for k in sorted(x, key=lambda k: (len(str(k)), str(k)))]
+    return [x]
+
+
+def _dict(x):
+    """A dict from a dict or a JSON object written as a string; anything else is empty."""
+    if isinstance(x, str) and x.strip().startswith('{'):
+        try: x = loads(x)
+        except ValueError: pass
+    return x if isinstance(x, dict) else {}
 
 
 def _text(x):
@@ -121,7 +147,7 @@ def block(b, mode):
     if isinstance(b, str): return {'type': 'para', 'text': b}
     if not isinstance(b, dict): return None
     b = dict(b)
-    t = str(b.get('type', 'para')).strip().lower().replace(' ', '_')
+    t = str(b.get('type') or 'para').strip().lower().replace(' ', '_')
     t = TYPE_ALIASES.get(t, t)
     if mode == 'gate': t = {'worked_example': 'example', 'pitfall': 'trap'}.get(t, t)
     else: t = {'example': 'worked_example', 'trap': 'pitfall', 'callout': 'note', 'code': 'note'}.get(t, t)
@@ -130,28 +156,39 @@ def block(b, mode):
     if t in FIELD: _alias(b, FIELD[t])
     if t in ('para', 'subhead', 'callout', 'trap', 'situation', 'concept', 'pitfall', 'note') and not isinstance(b.get('text', ''), str): b['text'] = _text(b['text'])
     if t in ('bullets', 'numbered'):
-        items = b.get('items')
-        b['items'] = [_text(x) for x in (items if isinstance(items, list) else [items] if items else [])]
+        b['items'] = [_text(x) for x in _list(b.get('items'))]
     if t == 'formula':
         b['latex'] = re.sub(r'^\s*(\$\$?|\\\[)|(\$\$?|\\\])\s*$', '', _text(b.get('latex')))
     if t == 'table':
         _alias(_alias(b, 'header'), 'rows')
-        rows, head = b.get('rows') or [], b.get('header') or []
+        rows, head = _list(b.get('rows')), _list(b.get('header'))
+        pick = lambda h, *ks: _text(next((h[k] for k in ks if h.get(k)), '') if isinstance(h, dict) else h)
+        keys, head = [pick(h, 'key', 'field', 'name', 'label') for h in head], [pick(h, 'label', 'name', 'key', 'field') for h in head]
         if rows and isinstance(rows[0], dict):
-            head = head or list(rows[0]); rows = [[r.get(h, '') for h in head] for r in rows]
-        b['header'], b['rows'] = [_text(h) for h in head], [[_text(c) for c in r] if isinstance(r, list) else [_text(r)] for r in rows]
+            keys = keys or [str(k) for k in rows[0]]; head = head or keys
+            rows = [[r.get(k, '') for k in keys] if isinstance(r, dict) else r for r in rows]
+        b['header'], b['rows'] = head, [[_text(c) for c in r] if isinstance(r, list) else [_text(r)] for r in rows]
     if t == 'example':
         _alias(_alias(b, 'problem'), 'solution')
         for k in ('problem', 'solution'):
             if isinstance(b.get(k), list): b[k] = [x for x in (block(v, mode) for v in b[k]) if x]
             elif b.get(k) is not None and not isinstance(b[k], str): b[k] = _text(b[k])
+    if t == 'worked_example' and (isinstance(b.get('problem'), list) or isinstance(b.get('solution'), list)):
+        sol = blocks(b.pop('solution', None), mode)
+        b['blocks'] = blocks(b.pop('problem', None), mode) + ([{'type': 'para', 'text': '**Solution.**'}] + sol if sol else []) + _list(b.get('blocks'))
+        b['text'] = b.get('text') or '**Problem.**'
     if t == 'worked_example' and not b.get('text') and (b.get('problem') or b.get('solution')):
         b['text'] = _text(b.pop('problem', '')) + ('\n\n**Solution.** ' + _text(b.pop('solution')) if b.get('solution') else '')
+    if t != 'example': b.pop('problem', None); b.pop('solution', None)          # only examples have them (never drawn elsewhere)
     if t == 'quick_check':
-        b['items'] = [{'q': _text(x.get('q') or x.get('question')), 'a': _text(x.get('a') or x.get('answer'))} for x in b.get('items') or [] if isinstance(x, dict)]
+        b['items'] = [{'q': _text(x.get('q') or x.get('question')), 'a': _text(x.get('a') or x.get('answer'))} for x in _list(b.get('items')) if isinstance(x, dict)]
     if t == 'figure':
-        if isinstance(b.get('figure'), dict): b.update(b.pop('figure'))
-        b['kind'] = str(b.get('kind', '')).lower()
+        if isinstance(b.get('figure'), dict):
+            fig = b.pop('figure'); b.update({k: v for k, v in fig.items() if k != 'type'})
+            if not b.get('kind') and fig.get('type') not in (None, 'figure'): b['kind'] = fig['type']
+        kind = str(b.get('kind') or '').strip().lower().replace(' ', '_')
+        b['kind'] = {'bar': 'bars', 'bar_chart': 'bars', 'histogram': 'bars', 'line': 'plot', 'line_chart': 'plot', 'chart': 'plot',
+                     'tree': 'graph', 'network': 'graph', 'diagram': 'graph', 'grid': 'cells', 'matrix': 'cells'}.get(kind, kind)
         if not isinstance(b.get('spec'), dict):
             b['spec'] = {k: v for k, v in b.items() if k not in ('type', 'kind', 'title', 'caption', 'width', 'spec')}
     if isinstance(b.get('blocks'), list): b['blocks'] = [x for x in (block(v, mode) for v in b['blocks']) if x]
@@ -159,8 +196,7 @@ def block(b, mode):
 
 
 def blocks(bs, mode):
-    if isinstance(bs, str): bs = [bs]
-    return [x for x in (block(b, mode) for b in bs or []) if x]
+    return [x for x in (block(b, mode) for b in _list(bs)) if x]
 
 
 def answer_range(ans):
@@ -177,7 +213,8 @@ def widen(rng, ans):
     try:
         lo, hi = sorted(float(x) for x in str(rng).split(' to ')); v = float(ans)
     except (ValueError, TypeError): return rng
-    d = len(str(ans).split('.')[1]) if '.' in str(ans) else 0
+    if '.' not in str(ans): return rng                 # a whole-number key (a count, an address) is exact in GATE
+    d = len(str(ans).split('.')[1])
     half = 0.001 * abs(v)
     if hi - lo >= 2 * half: return rng
     return f'{min(lo, v - half):.{d}f} to {max(hi, v + half):.{d}f}'
@@ -193,17 +230,24 @@ def question(q, mode='gate'):
             for a in alts:
                 if q.get(a) not in (None, '', []): q[field] = q.pop(a); break
     t = str(q.get('qtype') or q.get('type') or '').upper()
-    q['qtype'] = 'MSQ' if 'MSQ' in t or 'MULTI' in t else 'NAT' if any(x in t for x in ('NAT', 'NUM', 'INTEGER')) else 'MCQ' if t else ('NAT' if not q.get('options') else 'MCQ')
+    q['qtype'] = 'MSQ' if re.search(r'MSQ|SELECT|MULTIPLE[\s_-]*(CORRECT|ANSWER|RESPONSE)', t) else 'NAT' if any(x in t for x in ('NAT', 'NUM', 'INTEGER')) else 'MCQ' if t else ('NAT' if not q.get('options') else 'MCQ')
     q.pop('type', None)
     m = re.search(r'[12]', str(q.get('marks', '')))
     if m: q['marks'] = int(m.group())
+    else: q.pop('marks', None)                                  # "two", None, True: the checker reports the missing marks
+    q['question'] = _text(q.get('question'))
+    if q.get('solution') is not None and not isinstance(q['solution'], (str, list)): q['solution'] = _text(q['solution'])
     opts = q.get('options')
-    if isinstance(opts, dict): opts = [opts[k] for k in sorted(opts)]
-    if isinstance(opts, list): q['options'] = [re.sub(r'^\s*\(?[A-Da-d][).:]\s+', '', _text(o)) for o in opts]
+    if isinstance(opts, str) and re.search(r'\(?\b[A-D][).:]\s', opts):      # "A) x  B) y  C) z  D) w" in one string
+        opts = [o for o in re.split(r'(?:^|\s)\(?[A-D][).:]\s+', opts) if o.strip()]
+    opts = _list(opts) if opts not in (None, '') else None
+    if opts: q['options'] = [re.sub(r'^\s*\(?[A-Da-d][).:]\s+', '', _text(o)).strip() for o in opts]
+    else: q.pop('options', None)
     if q['qtype'] == 'NAT':
         q.pop('options', None)
-        m = re.search(r'-?\d+(\.\d+)?', str(q.get('answer', '')).replace('−', '-'))
-        if m: q['answer'] = m.group()
+        a = str(q.get('answer', '')).replace('−', '-').replace(',', '').rsplit('=', 1)[-1]       # "2^10 = 1024": the value after the last =
+        m = re.search(r'-?\d*\.?\d+(?:[eE][-+]?\d+)?', a)
+        if m and math.isfinite(float(m.group())): q['answer'] = (f'{float(m.group()):.10f}'.rstrip('0').rstrip('.') if re.search(r'[eE]|^-?\.', m.group()) else m.group())
         r = q.get('answer_range')
         if isinstance(r, (list, tuple)) and len(r) == 2: q['answer_range'] = f'{r[0]} to {r[1]}'
         elif isinstance(r, str) and re.fullmatch(r'\s*-?[\d.]+\s*[-–]\s*-?[\d.]+\s*', r): q['answer_range'] = re.sub(r'\s*[-–]\s*(?=-?[\d.]+\s*$)', ' to ', r.strip())
@@ -213,14 +257,18 @@ def question(q, mode='gate'):
         a = q.get('answer')
         if isinstance(a, int) and 1 <= a <= 4: a = 'ABCD'[a - 1]
         if isinstance(a, list): a = ', '.join(map(str, a))
-        a = str(a or '')
-        if q.get('options') and a.strip() in q['options']: a = 'ABCD'[q['options'].index(a.strip())]
-        letters = sorted(set(re.findall(r'\b([A-D])\b', re.sub(r'(?i)\boption\s*', '', a.upper()))))
-        if letters: q['answer'] = ', '.join(letters)
+        a = str(a or '').strip()
+        opts = q.get('options') or []
+        if a in opts and opts.index(a) < 4: a = 'ABCD'[opts.index(a)]
+        key = re.sub(r'(?i)\boption\s*', '', a)
+        if re.fullmatch(r'(?i)\s*\(?[A-D]\)?\.?(\s*(,|and|&|;|\s)\s*\(?[A-D]\)?\.?)*\s*', key): letters = re.findall(r'(?<![A-Za-z])[A-Da-d](?![A-Za-z])', key)
+        else: letters = re.findall(r'^\(?([A-Da-d])[).:]', key)        # "B) 24 ms": the letter in front
+        if letters: q['answer'] = ', '.join(sorted(set(x.upper() for x in letters)))
     if isinstance(q.get('solution'), list): q['solution'] = blocks(q['solution'], mode)
     for k in ('image', 'solution_image'): q.pop(k, None)
-    if isinstance(q.get('figure'), dict): q['figure'] = block(dict(q['figure'], type='figure'), mode)
-    if isinstance(q.get('solution_figure'), dict): q['solution_figure'] = block(dict(q['solution_figure'], type='figure'), mode)
+    for k in ('figure', 'solution_figure'):
+        if isinstance(q.get(k), dict): q[k] = block(dict(q[k], type='figure'), mode)
+        else: q.pop(k, None)
     return q
 
 
@@ -232,18 +280,19 @@ def _first(d, *keys):
 
 def gate_plan(p):
     p = clean(p if isinstance(p, dict) else {})
-    p['sections'] = [s if isinstance(s, dict) else {'heading': str(s)} for s in (_first(p, 'sections', 'outline') or [])]
+    p['sections'] = [s if isinstance(s, dict) else {'heading': _text(s)} for s in _list(_first(p, 'sections', 'outline'))]
     for s in p['sections']:
         s['heading'] = _text(_first(s, 'heading', 'title', 'name') or '')
         s['figure'] = _text(s.get('figure') or '')
-    p['objectives'] = [_text(x) for x in p.get('objectives') or []]
-    p['prerequisites'] = [_text(x) for x in p.get('prerequisites') or []]
+    for k in ('subtitle', 'syllabus_line'): p[k] = _text(p.get(k))
+    p['objectives'] = [_text(x) for x in _list(p.get('objectives'))]
+    p['prerequisites'] = [_text(x) for x in _list(p.get('prerequisites'))]
     return p
 
 
 def gate_notes(out):
     out = clean(out if isinstance(out, dict) else {})
-    notes = _first(out, 'notes', 'sections') or []
+    notes = _list(_first(out, 'notes', 'sections'))
     out = {'notes': [{'heading': _text(_first(n, 'heading', 'title') or ''), 'blocks': blocks(_first(n, 'blocks', 'content'), 'gate'),
                       **({'no_example': True} if n.get('no_example') else {})} for n in notes if isinstance(n, dict)]}
     return out
@@ -265,70 +314,71 @@ def align_notes(out, sections):
 
 def _lines(x):
     """traps / revision card lines: strings, from strings or {title, text} dicts."""
-    return [(f"**{d.get('title')}:** {d.get('text', '')}" if isinstance(d, dict) and d.get('title') else _text(d)) for d in (x or []) if d]
+    return [(f"**{d.get('title')}:** {d.get('text', '')}" if isinstance(d, dict) and d.get('title') else _text(d)) for d in _list(x) if d]
 
 
 def gate_questions(out):
     out = clean(out if isinstance(out, dict) else {})
-    practice = [question(q) for q in _first(out, 'practice', 'practice_questions') or [] if isinstance(q, dict)]
+    practice = [question(q) for q in _list(_first(out, 'practice', 'practice_questions')) if isinstance(q, dict)]
     for i, q in enumerate(practice):            # smaller models write "easy" or leave the level out; the prompt orders Easy -> Hard
         lvl = str(q.get('level', '')).strip().capitalize()
         q['level'] = lvl if lvl in LEVELS else LEVELS[i * 3 // len(practice)]
         q.pop('source', None)
     practice.sort(key=lambda q: LEVELS.index(q['level']))
-    sp = _first(out, 'sample_paper', 'sample') or {}
-    if isinstance(sp, list): sp = {'questions': sp}
-    sp = dict(sp); sp['questions'] = [question(q) for q in sp.get('questions') or [] if isinstance(q, dict)]
+    sp = _first(out, 'sample_paper', 'sample')
+    sp = {'questions': sp} if isinstance(sp, list) else dict(_dict(sp))
+    sp['questions'] = [question(q) for q in _list(sp.get('questions')) if isinstance(q, dict)]
     for q in sp['questions']: q.pop('source', None); q.pop('level', None)
     sp['marks'] = sum(q.get('marks', 0) for q in sp['questions'] if isinstance(q.get('marks'), int))
-    sp.setdefault('title', 'Sample paper (timed)'); sp.setdefault('duration', f"{round(sp['marks'] * 1.5)} min")
+    sp['title'] = _text(sp.get('title')) or 'Sample paper (timed)'; sp['duration'] = _text(sp.get('duration')) or f"{round(sp['marks'] * 1.5)} min"
     return {'practice': practice, 'sample_paper': sp, 'traps': _lines(out.get('traps')), 'revision_card': _lines(_first(out, 'revision_card', 'revision'))}
 
 
 def pyq_questions(out):
-    return {'questions': [question(q) for q in (out.get('questions') if isinstance(out, dict) else None) or [] if isinstance(q, dict)]}
+    return {'questions': [question(q) for q in _list(out.get('questions') if isinstance(out, dict) else None) if isinstance(q, dict)]}
 
 
 def nongate_plan(p):
     p = clean(p if isinstance(p, dict) else {})
-    p['topics'] = [t if isinstance(t, dict) else {'title': str(t)} for t in p.get('topics') or []]
+    p['topics'] = [t if isinstance(t, dict) else {'title': _text(t)} for t in _list(p.get('topics'))]
     for t in p['topics']: t['title'] = _text(_first(t, 'title', 'name') or '')
+    for k in ('title', 'description', 'study_time', 'audience'): p[k] = _text(p.get(k))
     return p
 
 
 def nongate_topics(out):
     out = clean(out if isinstance(out, dict) else {})
-    return {'topics': [{'blocks': blocks(_first(t, 'blocks', 'content') if isinstance(t, dict) else t, 'nongate')} for t in out.get('topics') or []]}
+    return {'topics': [{'blocks': blocks(_first(t, 'blocks', 'content') if isinstance(t, dict) else t, 'nongate')} for t in _list(out.get('topics'))]}
 
 
 def nongate_end(out):
     out = clean(out if isinstance(out, dict) else {})
-    cs = out.get('case_study')
-    if isinstance(cs, dict):
-        paras = cs.get('paragraphs') or cs.get('sections') or ([cs['text']] if cs.get('text') else [])
+    cs = _dict(out.get('case_study')) or None
+    if cs:
+        paras = _list(cs.get('paragraphs') or cs.get('sections') or cs.get('text'))
         cs['paragraphs'] = [p if isinstance(p, dict) else {'text': _text(p)} for p in paras]
         for p in cs['paragraphs']: p['text'] = _text(p.get('text') or p.get('content'))
         cs['title'] = _text(cs.get('title') or 'Case study'); cs['discussion'] = _text(cs.get('discussion') or '')
     practice = [{'tag': _text(p.get('tag', '')), 'question': _text(_first(p, 'question', 'q')), 'answer': _text(_first(p, 'answer', 'a', 'model_answer'))}
-                for p in out.get('practice') or [] if isinstance(p, dict)]
-    rev = out.get('revision')
-    if isinstance(rev, dict):
-        rev['concepts'] = [{'title': _text(c.get('title')), 'points': [_text(x) for x in c.get('points') or ([c['text']] if c.get('text') else [])]}
-                           for c in rev.get('concepts') or [] if isinstance(c, dict)]
-        rev['mistakes'] = [{'title': _text(m.get('title')), 'text': _text(m.get('text'))} for m in rev.get('mistakes') or [] if isinstance(m, dict)]
-        rev['checklist'] = [_text(x) for x in rev.get('checklist') or []]
+                for p in _list(out.get('practice')) if isinstance(p, dict)]
+    rev = _dict(out.get('revision')) or None
+    if rev:
+        rev['concepts'] = [{'title': _text(c.get('title')), 'points': [_text(x) for x in _list(c.get('points') or c.get('text'))]}
+                           for c in _list(rev.get('concepts')) if isinstance(c, dict)]
+        rev['mistakes'] = [{'title': _text(m.get('title')), 'text': _text(m.get('text'))} for m in _list(rev.get('mistakes')) if isinstance(m, dict)]
+        rev['checklist'] = [_text(x) for x in _list(rev.get('checklist'))]
         d = rev.get('distinctions')
         if isinstance(d, dict): rev['distinctions'] = block(dict(d, type='table'), 'nongate')
         elif d: rev.pop('distinctions')
-    return {'case_study': cs if isinstance(cs, dict) else None, 'practice': practice, 'revision': rev if isinstance(rev, dict) else None}
+    return {'case_study': cs, 'practice': practice, 'revision': rev}
 
 
 # ---------------------------------------------------------------- problems
 def number(x):
     """A number from an answer: 11788, '2.5', '0x2E0C', '2E0C_H', '1 to 2' (first value)."""
     s = str(x).strip().replace(',', '').replace('−', '-')
-    m = re.fullmatch(r'(?i)0x([0-9a-f]+)|([0-9a-f]+)\s*(?:_\{?h\}?|h|\(hex\))', s)
-    if m: return int(m.group(1) or m.group(2), 16)
+    m = re.fullmatch(r'0[xX]([0-9a-fA-F]+)|([0-9a-fA-F]+)\s*(?:_\{?[hH]\}?|\(hex\))|([0-9A-F]*[A-F][0-9A-F]*)H', s)
+    if m: return int(m.group(1) or m.group(2) or m.group(3), 16)
     m = re.search(r'-?\d+(\.\d+)?(e-?\d+)?', s)
     if not m: raise ValueError(f'no number in {x!r}')
     return float(m.group())
@@ -338,7 +388,7 @@ def check_mismatch(chk, answer=None, answer_range=None):
     """None when the arithmetic check reproduces the stated answer, else what is wrong."""
     expr = chk.get('expr') if isinstance(chk, dict) else chk
     stated = chk.get('answer', answer) if isinstance(chk, dict) else answer
-    try: v = float(safe_eval(expr))
+    try: v = float(safe_eval(str(expr).replace('^', '**')))
     except Exception as e: return f'its "check" expression {str(expr)[:60]!r} cannot be evaluated ({e}); write plain arithmetic'
     try:
         if answer_range and ' to ' in str(answer_range):
@@ -376,8 +426,8 @@ RAW_JSON = re.compile(r'"(?:type|ref|latex|blocks|value|heading)"\s*:|(?:\]\}|\}
 
 def raw_json(x):
     """True when text holds JSON the model leaked into it (a broken repair, or a block written as text)."""
-    if isinstance(x, str): return bool(RAW_JSON.search(x))
-    if isinstance(x, dict): return any(raw_json(v) for k, v in x.items() if k not in ('spec', 'check'))
+    if isinstance(x, str): return bool(RAW_JSON.search(re.sub(r'`[^`]*`', '', x)))
+    if isinstance(x, dict): return x.get('type') != 'code' and any(raw_json(v) for k, v in x.items() if k not in ('spec', 'check'))
     return isinstance(x, list) and any(raw_json(v) for v in x)
 
 
@@ -405,6 +455,7 @@ def missing_data(chk, given):
 def block_problems(bs, allowed, path):
     out = []
     for i, b in enumerate(bs):
+        if not isinstance(b, dict): continue           # only blocks are checked (a stray list under a non-example block is never drawn)
         p = path + (i,); t = b.get('type')
         if raw_json(b): out.append((p, 'this block contains raw JSON text instead of content: write it as proper blocks', True)); continue
         if t not in allowed: out.append((p, f'unknown block type {t!r}; use one of {sorted(allowed)}', True))
@@ -460,12 +511,25 @@ def _figures_and_text(parts):
     return figs, rest
 
 
+def _coarse(c):
+    """A curve of a formula (exponential, sinc...) given as a short point list: at 3 or more points the slope changes in size,
+    which straight-line shapes (pulses, triangles, steps) never do."""
+    try: x, y = [float(v) for v in c['x']], [float(v) for v in c['y']]
+    except (KeyError, TypeError, ValueError): return False
+    if c.get('step') or c.get('stem') or c.get('markers') or not 4 <= len(x) <= 40 or len(x) != len(y): return False
+    s = [(y[i + 1] - y[i]) / (x[i + 1] - x[i]) if x[i + 1] != x[i] else None for i in range(len(x) - 1)]
+    bends = sum(1 for a, b in zip(s, s[1:]) if a and b and abs(abs(a) - abs(b)) > 0.1 * max(abs(a), abs(b)))
+    return bends >= 3
+
+
 def figure_problems(f, path, example_text=None):
     """A figure that cannot teach anything: data from another example, no axis labels, or a two-node diagram."""
-    spec, kind, out = f.get('spec') or {}, f.get('kind'), []
+    spec, kind, out = _dict(f.get('spec')), f.get('kind'), []
     if kind in ('plot', 'bars') and not (spec.get('xlabel') or spec.get('ylabel') or f.get('title') or spec.get('title') or f.get('caption')):
         out.append((path, f'the {kind} figure has no axis labels, title or caption: label what is plotted, with units', False))
-    if kind == 'graph' and len(spec.get('nodes') or []) < 3:
+    if kind == 'plot' and any(_coarse(c) for c in _list(spec.get('curves')) if isinstance(c, dict)):
+        out.append((path, 'a smooth curve is given as a few points, so it is drawn as straight segments: give it as "expr" with "range"', False))
+    if kind == 'graph' and len(_list(spec.get('nodes'))) < 3:
         out.append((path, 'a diagram of one or two nodes tells the student nothing: draw what the section needs (a plot, beam, circuit...) or leave it out', False))
     if example_text is not None:
         have = [abs(v) for v in _numbers(example_text) if v]
@@ -525,13 +589,15 @@ def question_checks(q, path):
     gap = missing_data(q['check'], json.dumps([q.get('question'), q.get('options'), q.get('figure')], ensure_ascii=False))
     out = [(path, gap, False)] if gap else []
     if q.get('qtype') == 'NAT': m = check_mismatch(q['check'], q.get('answer'), q.get('answer_range'))
-    elif q.get('qtype') == 'MCQ' and q.get('options') and re.fullmatch(r'[A-D]', str(q.get('answer', ''))):
+    elif q.get('qtype') == 'MCQ' and re.fullmatch(r'[A-D]', str(q.get('answer', ''))) and 'ABCD'.index(q['answer']) < len(q.get('options') or []):
         opt = q['options']['ABCD'.index(q['answer'])]
+        if re.search(r'[$/^\\]', opt): return out                  # 2.5 x 10^3, 1/3, $2^{10}$: not a plain number to compare
         try: number(opt)
         except ValueError: return out
         m = check_mismatch(q['check'], opt)
+        return out + ([(path, m, False)] if m else [])
     else: return out
-    return out + ([(path, m, True)] if m else [])
+    return out + ([(path, m, 'cannot be evaluated' not in m)] if m else [])
 
 
 def gate_questions_problems(out, paper):
@@ -569,5 +635,5 @@ def nongate_end_problems(out):
     if not out['practice'] or not all(p['question'] and p['answer'] for p in out['practice']):
         return [((), '"practice" must be a list of {tag, question, answer}, each with a question and an answer', True)]
     probs = [(item_path(p), m, h) for p, m, h in math_problems(out, ())]
-    if out['case_study'] and not out['case_study']['paragraphs']: probs.append((('case_study',), 'the case study needs "paragraphs"', True))
+    if out.get('case_study') and not out['case_study'].get('paragraphs'): probs.append((('case_study',), 'the case study needs "paragraphs"', True))
     return probs + drawing_problems(out)

@@ -10,8 +10,11 @@ BUCKETS = ('books', 'outputs')
 
 def _dsn():
     """DATABASE_URL with the password encoded, so a password containing @ / # ? : still works."""
-    scheme, rest = secret('DATABASE_URL').strip().split('://', 1)
+    url = secret('DATABASE_URL').strip()
+    scheme, rest = url.split('://', 1)
+    if '@' not in rest: return url
     userinfo, host = rest.rsplit('@', 1)                       # the last @ separates the password from the host
+    if ':' not in userinfo: return url
     user, password = userinfo.split(':', 1)
     return f'{scheme}://{user}:{quote(unquote(password), safe="")}@{host}'
 
@@ -19,7 +22,8 @@ def _dsn():
 @functools.cache
 def _pool():
     # prepare_threshold=None: Supabase's pooler (transaction mode) does not support prepared statements
-    return ConnectionPool(_dsn(), min_size=1, max_size=12, open=True,
+    # check: a connection the pooler closed while idle is replaced before use, instead of failing one query
+    return ConnectionPool(_dsn(), min_size=1, max_size=12, open=True, check=ConnectionPool.check_connection, max_idle=120,
                           kwargs={'autocommit': True, 'row_factory': dict_row, 'prepare_threshold': None})
 
 
@@ -65,7 +69,10 @@ def remove(bucket, paths):
 @functools.cache
 def init():
     """Create tables and buckets on first start (safe to repeat)."""
-    sql(open(os.path.join(os.path.dirname(__file__), 'schema.sql'), encoding='utf-8').read())
+    with _pool().connection() as conn:          # one app instance at a time (two redeploys starting together would collide)
+        conn.execute('select pg_advisory_lock(424242)')
+        try: conn.execute(open(os.path.join(os.path.dirname(__file__), 'schema.sql'), encoding='utf-8').read())
+        finally: conn.execute('select pg_advisory_unlock(424242)')
     have = {b.name for b in _storage().list_buckets()}
     for b in BUCKETS:
         if b not in have: _storage().create_bucket(b, options={'public': False})

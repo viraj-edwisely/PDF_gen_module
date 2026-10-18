@@ -15,6 +15,8 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.platypus.flowables import Flowable
 from reportlab.platypus import (BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, Table, TableStyle,
                                 Image, KeepTogether, PageBreak, Preformatted, CondPageBreak, NextPageTemplate)
+import reportlab.platypus.paragraph as _para
+_para.paraFontSizeHeightOffset = 0       # a first line starts below its tallest part (inline maths), not one font size down: maths never pokes out above
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -62,53 +64,104 @@ normalize_tex = TEX.normalize      # LaTeX that mathtext cannot draw, rewritten 
 
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
     tex = TEX.normalize(tex) if display else TEX.inline(tex)
-    key = hashlib.md5(f'{tex}|{size}|{display}|{color}'.encode()).hexdigest()
+    key = hashlib.md5(f'{tex}|{size}|{display}|{color}|crop'.encode()).hexdigest()
     fn = os.path.join(MATHDIR, key + '.png')
     if not os.path.exists(fn):
         fig = plt.figure(figsize=(0.01, 0.01))
         try:
             fig.text(0, 0, f'${tex}$', fontsize=size * (1.25 if display else 1), color=color)
-            fig.savefig(fn, dpi=300, bbox_inches='tight', pad_inches=0.02, transparent=True)
+            fig.savefig(fn, dpi=300, bbox_inches='tight', pad_inches=0.1, transparent=True)
         finally:
             plt.close(fig)
+        from PIL import Image as PI          # the tight box can cut off accents and stacked tops (\overset, \dot): crop to the ink instead
+        im = PI.open(fn); l, t, r, b = im.getbbox() or (0, 0) + im.size
+        im.crop((max(l - 6, 0), max(t - 6, 0), min(r + 6, im.width), min(b + 6, im.height))).save(fn)
     from PIL import Image as PI
     w, h = PI.open(fn).size
     return fn, w * 72 / 300, h * 72 / 300
 
 
 SYMBOLS = {r'\times': '×', r'\cdot': '·', r'\wedge': '∧', r'\vee': '∨', r'\neg': '¬', r'\leq': '≤', r'\geq': '≥', r'\neq': '≠', r'\Rightarrow': '⇒', r'\rightarrow': '→',
-           r'\to': '→', r'\pm': '±', r'\ldots': '…', r'\sum': 'Σ', r'\pi': 'π', r'\mu': 'µ', r'\Omega': 'Ω', r'\alpha': 'α', r'\beta': 'β', r'\theta': 'θ', r'\lambda': 'λ'}
+           r'\to': '→', r'\pm': '±', r'\ldots': '…', r'\sum': 'Σ', r'\pi': 'π', r'\mu': 'µ', r'\Omega': 'Ω', r'\alpha': 'α', r'\beta': 'β', r'\theta': 'θ', r'\lambda': 'λ',
+           r'\over': '/', r'\mid': '|', r'\vert': '|', r'\Vert': '‖', r'\in': '∈', r'\infty': '∞', r'\Leftrightarrow': '⇔', r'\leftarrow': '←', r'\approx': '≈'}
+
+
+def frac_text(t):
+    """\\frac{a}{b} -> a/b, with brackets round a part that is not a single token."""
+    p = lambda x: x if re.fullmatch(r'\w*', x) else f'({x})'
+    for _ in range(3): t = re.sub(r'\\frac\s*' + TEX.ARG + r'\s*' + TEX.ARG, lambda m: p(m.group(1)) + '/' + p(m.group(2)), t)
+    return t
 
 
 def tex_text(tex):
     """Readable plain text for maths the renderer cannot draw, instead of showing raw LaTeX."""
-    t = normalize_tex(tex)
-    t = re.sub(r'\\(?:mathrm|text|textbf|mathbf|operatorname)\{([^{}]*)\}', r'\1', t)
-    t = re.sub(r'\\(?:begin|end)\{[^{}]*\}', '', t).replace('\\\\', '; ').replace('&', ' ')
-    t = re.sub(r'\\[A-Za-z]+', lambda m: SYMBOLS.get(m.group(0), ''), t)
+    t = frac_text(normalize_tex(tex))
+    t = re.sub(r'\\(?:mathrm|text|textbf|mathbf|mathit|mathbb|mathcal|mathsf|operatorname)\{([^{}]*)\}', r'\1', t)
+    t = re.sub(r'(?<!\\)&', ' ', re.sub(r'\\(?:begin|end)\{[^{}]*\}', '', t).replace('\\\\', '; '))      # column marks; \& stays a literal &
+    t = re.sub(r'\\[A-Za-z]+', lambda m: SYMBOLS.get(m.group(0)) or FIG.GREEK.get(m.group(0)[1:], ''), t)
+    t = re.sub(r'\\([{}|%#&$])', r'\1', re.sub(r'\\[ ,;:!]', ' ', t))         # spacing commands and escaped symbols
     return re.sub(r'\s+', ' ', t.replace('{', '').replace('}', '')).strip()
 
 
-def rich(text, size=10.5, color='#1F1A2E', max_w=None):
-    """**bold**, *italic*, $math$ -> reportlab markup. max_w: maths wider than this (a table cell) is scaled down to fit."""
+TEXT_KEYS = {'title', 'subtitle', 'tagline', 'subject', 'paper', 'topic_name', 'syllabus_line', 'heading', 'text', 'caption', 'tag', 'source',
+             'question', 'answer', 'answer_range', 'qtype', 'level', 'lead', 'description', 'discussion', 'marking', 'duration',
+             'checklist_title', 'pyq_note', 'q', 'a', 'latex', 'study_time', 'audience'}
+
+
+def as_text(x):
+    if isinstance(x, list): return '\n\n'.join(as_text(v) for v in x)
+    if isinstance(x, dict): return as_text(x.get('text') or ' '.join(as_text(v) for v in x.values()))
+    return '' if x is None else str(x)
+
+
+def printable(x, key=None):
+    """The content with every field the renderers print as text made a string, whatever the model put there.
+    Figure specs are left alone (figures.py reads their own types)."""
+    if key == 'spec': return x
+    if key in TEXT_KEYS and x is not None and not isinstance(x, str): return as_text(x)
+    if isinstance(x, dict):            # an empty text field is left out, so the renderer's default wording applies
+        return {k: printable(v, k) for k, v in x.items() if not (k in TEXT_KEYS and (v is None or v == ''))}
+    if isinstance(x, list): return [printable(v) for v in x]
+    return x
+
+
+MONEY = re.compile(r'(?<!\\)\$(?=\d[\d.,]*\s[^$\\]*?\b[A-Za-z]{3})')       # "costs $5 and $10": money, not maths
+
+
+def math_split(text):
+    """[text, maths, text, maths, ...]; $$x$$ in running text is maths like $x$."""
+    return re.split(r'(?<!\\)\$(.+?)(?<!\\)\$', MONEY.sub(r'\\$', text.replace('$$', '$')), flags=re.S)
+
+
+ITALIC = re.compile(r'(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])')       # *x* only: never the stars of a*b*, 2*3 or (a|b)*
+
+
+def rich(text, size=10.5, color='#1F1A2E', max_w=INNER):
+    """**bold**, *italic*, `code`, $math$ -> reportlab markup. Maths wider than max_w (the room it has) is scaled down to fit."""
+    if not isinstance(text, str): text = '\n'.join(map(str, text)) if isinstance(text, list) else '' if text is None else str(text)
     out, bold = [], False                     # **bold** may contain $maths$, so its state runs across the pieces
-    for i, part in enumerate(re.split(r'(?<!\\)\$(.+?)(?<!\\)\$', text or '', flags=re.S)):
-        if i % 2:
-            part = ' '.join(part.split())                        # maths written over several lines
-            try:
-                fn, w, h = math_img(part, size, False, color)
-                if max_w and w > max_w: w, h = max_w, h * max_w / w
-                out.append(f'<img src="{fn}" width="{w:.1f}" height="{h:.1f}" valign="{-h * 0.28:.1f}"/>')
-            except Exception:
-                out.append(html.escape(tex_text(part)))
-        else:
-            t = html.escape(part.replace('\\$', '$'))
-            pieces = t.split('**'); t = pieces[0]
-            for piece in pieces[1:]:
-                bold = not bold; t += ('<b>' if bold else '</b>') + piece
-            t = re.sub(r'(?<!\*)\*(?!\*)(.+?)\*', r'<i>\1</i>', t)
-            t = re.sub(r'`([^`]+)`', r'<font name="Mono">\1</font>', t)          # `code` in running text
-            out.append(t.replace('\n', '<br/>'))
+
+    def star2(m):                             # ** opens before a non-space and closes after one, never inside x ** 2 or a**b
+        nonlocal bold
+        before, after = m.string[m.start() - 1:m.start()], m.string[m.end():m.end() + 1]
+        if not bold and not after.isspace() and not re.match(r'[\w*]', before): bold = True; return '<b>'
+        if bold and not before.isspace() and not re.match(r'[\w*]', after): bold = False; return '</b>'
+        return m.group(0)
+
+    for j, chunk in enumerate(re.split(r'`([^`\n]+)`', text)):         # `code` first: its * and $ are typed characters
+        if j % 2: out.append(f'<font name="Mono">{html.escape(chunk)}</font>'); continue
+        for i, part in enumerate(math_split(chunk)):
+            if i % 2:
+                part = ' '.join(part.split())                        # maths written over several lines
+                try:
+                    fn, w, h = math_img(part, size, False, color)
+                    if max_w and w > max_w: w, h = max_w, h * max_w / w
+                    out.append(f'<img src="{fn}" width="{w:.1f}" height="{h:.1f}" valign="{-h * 0.28:.1f}"/>')
+                except Exception:
+                    out.append(html.escape(tex_text(part)))
+            else:
+                t = ITALIC.sub(r'<i>\1</i>', html.escape(part.replace('\\$', '$')))
+                out.append(re.sub(r'\*\*', star2, t).replace('\n', '<br/>'))
     return ''.join(out) + ('</b>' if bold else '')
 
 
@@ -128,21 +181,25 @@ def keep(flow):
 
 def styled_table(header, rows, widths=None, total_row=False, avail=None):
     """Purple header, striped rows. total_row=True: last row bold on a darker lavender (Average / Total)."""
+    """No header: the rows alone. A row longer than the header keeps its cells (the header gets empty ones)."""
     avail = avail or TW
-    n = len(header)
-    if widths and sum(widths) > avail: widths = [w * avail / sum(widths) for w in widths]
-    widths = widths or [avail / n] * n
+    rows = [list(r) if isinstance(r, (list, tuple)) else [r] for r in rows]
+    n = max([len(header or [])] + [len(r) for r in rows])
+    if not (widths and len(widths) == n and all(isinstance(w, (int, float)) and w >= 30 for w in widths)): widths = [avail / n] * n    # widths that cannot be used
+    if sum(widths) > avail: widths = [w * avail / sum(widths) for w in widths]
     body = []
     for i, r in enumerate(rows):
-        r = (list(r) + [''] * n)[:n]                     # every row as wide as the header
+        r = r + [''] * (n - len(r))                     # every row as wide as the widest
         st_ = S['cellb'] if total_row and i == len(rows) - 1 else S['cell']
         body.append([Paragraph(rich('' if c is None else str(c), max_w=w - 12), st_) for c, w in zip(r, widths)])
-    data = [[Paragraph(rich(h, color='#FFFFFF', max_w=w - 12), S['cellh']) for h, w in zip(header, widths)]] + body
-    t = Table(data, colWidths=widths, repeatRows=1)
-    st = [('BACKGROUND', (0, 0), (-1, 0), PURPLE), ('GRID', (0, 0), (-1, -1), 0.5, LINE),
+    head = [[Paragraph(rich(h, color='#FFFFFF', max_w=w - 12), S['cellh']) for h, w in zip(list(header) + [''] * n, widths)]] if any(not blank(h) for h in header or []) else []
+    data = head + body
+    t = Table(data, colWidths=widths, repeatRows=len(head), splitInRow=1)       # splitInRow: a cell taller than a page goes on over the next
+    st = [('GRID', (0, 0), (-1, -1), 0.5, LINE),
           ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-          ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('BACKGROUND', (0, 1), (-1, -1), colors.white)]
-    st += [('BACKGROUND', (0, i), (-1, i), LAV) for i in range(2, len(data), 2)]
+          ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('BACKGROUND', (0, 0), (-1, -1), colors.white)]
+    st += [('BACKGROUND', (0, 0), (-1, 0), PURPLE)] if head else []
+    st += [('BACKGROUND', (0, i), (-1, i), LAV) for i in range(len(head) + 1, len(data), 2)]
     if total_row: st += [('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E6DEF5')), ('LINEABOVE', (0, -1), (-1, -1), 1, PURPLE)]
     t.setStyle(TableStyle(st)); return t
 
@@ -155,7 +212,7 @@ def box(flows, bg=LAV, bar=PURPLE, pad=8, width=TW):
         cell = [flows[k]]
         while getattr(flows[k], '_keep_next', False) and k + 1 < len(flows): k += 1; cell.append(flows[k])
         rows.append([cell if len(cell) > 1 else cell[0]]); k += 1
-    t = Table(rows, colWidths=[width])
+    t = Table(rows, colWidths=[width], splitInRow=1)        # a part taller than a page (long code, a long note) goes on over the next
     t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), bg), ('LINEBEFORE', (0, 0), (0, -1), 3, bar),
                            ('LEFTPADDING', (0, 0), (-1, -1), pad + 2), ('RIGHTPADDING', (0, 0), (-1, -1), pad),
                            ('TOPPADDING', (0, 0), (-1, -1), 1), ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
@@ -181,6 +238,7 @@ def image(path, maxw=None, maxh=115 * mm, width=None, align='CENTER'):
     if width: sc = min(maxw * float(width) / nat_w, 1.15)      # never blow a small drawing up: its text would grow with it
     else: sc = min(1.0, maxw / nat_w)
     sc = min(sc, maxh / nat_h) if nat_h * sc > maxh else sc
+    if sc < 0.5: warn(f'A figure had to be shrunk to {sc:.0%} of its size to fit the page; its text may be hard to read')
     im = Image(path, nat_w * sc, nat_h * sc); im.hAlign = align; return im
 
 
@@ -222,7 +280,11 @@ def blocks(items, avail=None):
 def block(b, avail):
     out = []
     t = b.get('type', 'para')
-    if (t in BLOCK_FIELD and not b.get(BLOCK_FIELD[t])) or (t == 'table' and not (b.get('header') and b.get('rows'))): return out     # nothing to show
+    boxed = avail < TW                      # inside a box: page-level layout (breaks, big gaps) does not apply
+    if t in ('bullets', 'numbered'): b = dict(b, items=[x for x in b.get('items') or [] if not blank(x)])
+    if (t in BLOCK_FIELD and blank(b.get(BLOCK_FIELD[t]))) or (t == 'table' and not b.get('rows')) or (boxed and t in ('spacer', 'pagebreak')) or \
+       (t in ('note', 'trap') and blank(b.get('text')) and not b.get('blocks')) or (t == 'example' and blank(b.get('problem')) and blank(b.get('solution'))):
+        return out     # nothing to show
     if t == 'para': out.append(P(b['text']))
     elif t == 'subhead': out.append(keep(Paragraph(rich(b['text']), S['subhead'])))
     elif t == 'bullets':
@@ -238,6 +300,7 @@ def block(b, avail):
         for line in TEX.lines(b['latex']):      # rows of align/aligned, or rows split by \\, each on its own line
             try:
                 fn, w, h = math_img(line, 11, True)
+                if w > 2 * avail: warn('A formula had to be shrunk to under half its size to fit the page; it may be hard to read')
                 if w > avail: h, w = h * avail / w, avail
                 im = Image(fn, w, h); im.hAlign = 'CENTER'
                 out += [im, Spacer(1, 2)]
@@ -245,16 +308,16 @@ def block(b, avail):
                 out.append(Paragraph(html.escape(tex_text(line)), S['body']))
         out.append(Spacer(1, 3))
     elif t == 'table':
-        out += [styled_table(b['header'], b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
+        out += [styled_table(b.get('header'), b['rows'], b.get('widths'), b.get('total_row', False), avail), Spacer(1, 6)]
     elif t == 'code':
         chars = int((avail - 24) / (S['mono'].fontSize * 0.602))      # long lines are wrapped instead of running out of the box
-        out += [box([Preformatted(b['text'], S['mono'], maxLineLength=chars, splitChars=' ')], bg=colors.HexColor('#F7F5FC'), bar=LINE, width=avail), Spacer(1, 6)]
+        out += [box([Preformatted(b['text'].expandtabs(4), S['mono'], maxLineLength=chars, splitChars=' ')], bg=colors.HexColor('#F7F5FC'), bar=LINE, width=avail), Spacer(1, 6)]
     elif t == 'callout':
         out += [box([Paragraph(rich(b['text'], color='#FFFFFF'), S['callout'])], bg=PURPLE, bar=YEL, width=avail), Spacer(1, 6)]
     elif t in ('note', 'trap'):
         title = b.get('title', 'Common GATE trap' if t == 'trap' else None)
         inner = ([keep(Paragraph(html.escape(title), S['boxtitle']))] if title else []) + \
-                ([P(x) for x in b['text'].split('\n\n')] if b.get('text') else []) + blocks(b.get('blocks', []), INNER)
+                ([P(x) for x in b['text'].split('\n\n')] if b.get('text') else []) + blocks(b.get('blocks', []), avail - 22)
         out += [box(inner, width=avail), Spacer(1, 6)]
     elif t == 'figure':
         fp = figure_path(b)
@@ -266,14 +329,17 @@ def block(b, avail):
     elif t == 'example':
         title = re.sub(r'^((worked )?example\s*[:\-–—]*\s*)+', '', b.get('title') or '', flags=re.I)     # the label is added here, so a title must not repeat it
         inner = [keep(Paragraph(f'<font name="Head" color="#4D2A87">Worked example{": " + html.escape(title) if title else ""}</font>', S['body']))]
-        inner += text_or_blocks(b.get('problem'))
+        inner += text_or_blocks(b.get('problem'), avail - 22)
         inner.append(keep(Paragraph('<font name="HeadM" color="#4D2A87">Solution</font>', S['body'])))
-        inner += text_or_blocks(b.get('solution'))
+        inner += text_or_blocks(b.get('solution'), avail - 22)
         out += [box(inner, width=avail), Spacer(1, 8)]
-    elif t == 'spacer': out.append(Spacer(1, b.get('height', 6)))
+    elif t == 'spacer': out.append(Spacer(1, min(float(b.get('height') or 6), 50)))
     elif t == 'pagebreak': out.append(PageBreak())
     else: raise ValueError(f'unknown block type {t!r}')
     return out
+
+
+def blank(x): return not (x.strip() if isinstance(x, str) else x)
 
 
 def text_or_blocks(x, avail=INNER):
@@ -293,7 +359,7 @@ class TopicDoc(BaseDocTemplate):
         level, text, key = e
         self.canv.bookmarkPage(key)
         self.canv.addOutlineEntry(text, key, level=max(level, 0), closed=False)
-        if level >= 0: self.notify('TOCEntry', (level, text, self.page, key))
+        if level >= 0: self.notify('TOCEntry', (level, html.escape(text), self.page, key))      # the contents page reads markup
 
 
 class Anchor(Flowable):
@@ -304,8 +370,10 @@ class Anchor(Flowable):
 
 
 def plain(t):
-    t = re.sub(r'\$(.+?)\$', lambda m: re.sub(r'[\\{}_^]|mathrm', '', m.group(1)), t or '')
-    return re.sub(r'\*\*|(?<!\*)\*(?!\*)', '', t)
+    """A heading as plain text (contents, PDF sidebar, page header): maths as readable text, no markdown."""
+    parts = math_split(t or '')
+    t = ''.join(tex_text(p) if i % 2 else ITALIC.sub(r'\1', p.replace('\\$', '$')) for i, p in enumerate(parts))
+    return re.sub(r'(?<![\w*])\*\*(?=\S)|(?<=\S)\*\*(?![\w*])|`', '', t)
 
 
 _nkey = [0]

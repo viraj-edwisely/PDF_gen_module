@@ -3,12 +3,10 @@
 Prints the failures as JSON: [{"path": [...], "what": "figure" | "maths", "error": "..."}].
 
 Usage: python check_content.py content.json     (run as a subprocess: matplotlib must not be shared between threads)"""
-import json, re, sys
+import json, sys
 import figures
-from render_common import math_img
+from render_common import math_img, math_split
 import tex as TEX
-
-MATH = re.compile(r'(?<!\\)\$(.+?)(?<!\\)\$', re.S)
 
 
 def brief(e):
@@ -28,7 +26,7 @@ def walk(x, path=(), key=None):
     elif isinstance(x, list):
         for i, v in enumerate(x): yield from walk(v, path + (i,), key)
     elif isinstance(x, str):
-        for tex in TEX.lines(x) if key == 'latex' else [' '.join(m.split()) for m in MATH.findall(x)]:      # as the renderer draws them
+        for tex in TEX.lines(x) if key == 'latex' else [' '.join(m.split()) for m in math_split(x)[1::2]]:      # as the renderer draws them
             try: math_img(tex, display=key == 'latex')
             except Exception as e:
                 yield {'path': list(path), 'what': 'maths', 'error': f'cannot draw the maths "{tex[:80]}": {brief(e)[:160]}'}

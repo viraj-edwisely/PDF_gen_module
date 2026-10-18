@@ -56,7 +56,7 @@ def build_zip(run, topics):
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
         for t in (t for t in topics if t['pdf_path']):
             c = json.loads(fetch(t['json_path']))
-            name = re.sub(r'[^A-Za-z0-9]+', '_', t['name']).strip('_')[:80] + '.pdf'
+            name = f"{t['position'] + 1:02d}_" + (re.sub(r'[^\w]+', '_', t['name']).strip('_')[:80] or 'topic') + '.pdf'   # numbered: no two topics share a name
             z.writestr(name, fetch(t['pdf_path']))
             ws.append([t['name'], name, run['mode'], f"{run['provider']} ({run['model']})", t['status'], float(t['cost_usd']), len(c.get('pyqs', [])), len(c.get('practice', [])),
                        len((c.get('sample_paper') or {}).get('questions', [])), count(c, ('example', 'worked_example')), count(c, ('figure',)), '; '.join(t['warnings'])])

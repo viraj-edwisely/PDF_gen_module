@@ -12,6 +12,8 @@ The app draws figures from a JSON spec in the Edwisely palette:
 - In a question: "figure": {"kind": ..., "spec": ...}; in the answer key: "solution_figure": {...}.
 - Labels match the text exactly (P1, A-B, q0, R1); units on axes; key values annotated. One idea per figure; keep labels short (under about 20 characters per node or cell).
 - Labels are plain text: write Greek letters and subscripts as characters (ω, π, θ, x₀, T₁), or put maths inside $...$ ("$X(j\omega)$"). Never write \omega or \frac without $...$.
+- A curve that follows a formula (exponential, sinc, sine, parabola) is an "expr" with a "range", never a short list of points: points are joined by straight lines. Point lists are for straight-line shapes (pulses, triangles) and measured data.
+- Annotations sit inside the plot area (their "xytext" within the axis limits); the legend sits above the plot.
 - Pick the kind by what the figure shows. graph is only for nodes joined by edges (trees, state machines, networks, block diagrams); it is never a way to draw a signal, a spectrum or a shape. Signals, spectra and impulse trains are plot figures (impulses: a curve with "stem": true); shafts, beams and loads are beam figures.
 - Draw a figure only when it shows something the text does not: a figure that only repeats a formula or a number is left out.
 

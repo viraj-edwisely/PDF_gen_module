@@ -63,7 +63,14 @@ def save(fig, path):
 
 
 def _fmt(v):
-    return f'{v:g}' if isinstance(v, (int, float)) else str(v)
+    if not isinstance(v, (int, float)): return str(v)
+    return f'{v:,.0f}' if 1e5 <= abs(v) < 1e15 else f'{v:g}'      # 12,345,679 rather than 1.23457e+07
+
+
+def _size(spec):
+    """The figure size asked for, kept between a stamp and a page (a huge figure would be shrunk until its text is unreadable)."""
+    w, h = spec.get('size') or (6.4, 3.0)
+    return min(max(float(w), 1.5), 7.5), min(max(float(h), 1.0), 5.0)
 
 
 # ---------------------------------------------------------------- gantt / timeline
@@ -87,7 +94,7 @@ def gantt(spec, out):
     rh = spec.get('height', 0.5)
     gap = 0.0 if left else 0.38
     fig_h = len(rows) * (rh + 0.62) + (len(rows) - 1) * 0.2 + (0.3 * len(rows) if any(r.get('title') for r in rows) and not left else 0)
-    fig, ax = plt.subplots(figsize=(spec.get('width', 7.2), fig_h))
+    fig, ax = plt.subplots(figsize=(spec.get('width', 7.2), min(fig_h, 9)))      # many rows: closer together, not a figure taller than the page
     y = 0; yt = []
     for r in reversed(rows):
         ticks = set()
@@ -100,9 +107,11 @@ def gantt(spec, out):
                 c = col(cmap.get(lab))
                 ax.barh(y, b - a, left=a, height=rh, color=c, edgecolor='white', lw=1.6)
                 txt_c = INK if c in ('#D9A400', YEL, LAV, '#FFFFFF') else 'white'
-                if (b - a) / max(tmax - tmin, 1e-9) > 0.025:
+                room = (b - a) / max(tmax - tmin, 1e-9) * spec.get('width', 7.2) * 0.85      # the bar's width in inches
+                size = 8 if len(lab) * 0.11 + 0.04 <= room else 6.5 if len(lab) * 0.09 + 0.03 <= room else 0    # a label only where it fits its bar
+                if size:
                     ax.text((a + b) / 2, y, lab, ha='center', va='center', color='white' if txt_c == 'white' else INK,
-                            fontsize=8, fontweight='medium')
+                            fontsize=size, fontweight='medium')
             ticks.update([a, b])
         if spec.get('ticks', 'auto') != 'none':
             tl = spec['ticks'] if isinstance(spec.get('ticks'), list) else sorted(ticks)
@@ -138,16 +147,17 @@ def plot(spec, out):
            "stem": true (impulses / line spectra: a vertical line from 0 to each y, with an arrow head),
            "markers": true, "values": true (print y at the given x points), "lw"."""
     brand()
-    fig, ax = plt.subplots(figsize=tuple(spec.get('size', (6.4, 3.0))))
-    k = 0
+    fig, ax = plt.subplots(figsize=_size(spec))
+    k, spiky = 0, []
     for c in spec.get('curves', []):
         if 'expr' in c:
-            a, b = c.get('range', [0, 1]); x = np.linspace(a, b, c.get('n', 400)); y = _safe_eval(c['expr'], x=x) * np.ones_like(x)
+            a, b = c.get('range', [0, 1]); x = np.linspace(a, b, _samples(c)); y = _cut_jumps(_safe_eval(c['expr'], x=x) * np.ones_like(x)); spiky.append(y)
         elif 'param' in c:
-            a, b = c.get('range', [0, 2 * np.pi]); t = np.linspace(a, b, c.get('n', 400))
+            a, b = c.get('range', [0, 2 * np.pi]); t = np.linspace(a, b, _samples(c))
             x = _safe_eval(c['param'][0], t=t) * np.ones_like(t); y = _safe_eval(c['param'][1], t=t) * np.ones_like(t)
         else:
             x, y = np.asarray(c['x'], float), np.asarray(c['y'], float)
+            ok = np.isfinite(x) & np.isfinite(y); x, y = x[ok], y[ok]          # a NaN or inf point is left out
         colr = col(c.get('color'), PALETTE[k % len(PALETTE)]); k += 1
         kw = dict(color=colr, lw=c.get('lw', 2), ls=c.get('style', '-'), label=c.get('label') if c.get('lw', 2) else None)
         if c.get('stem'):
@@ -175,14 +185,15 @@ def plot(spec, out):
     for v in spec.get('vlines', []):
         v = v if isinstance(v, dict) else {'x': v}
         ax.axvline(v['x'], color=col(v.get('color'), GREY), ls=v.get('style', '--'), lw=1)
-        if v.get('label'): ax.text(v['x'], ax.get_ylim()[1], v['label'], ha='center', va='bottom', fontsize=7.5, color=GREY)
-    for a in spec.get('annotations', []):
-        ax.annotate(a['text'], tuple(a['xy']), xytext=tuple(a.get('xytext', a['xy'])), fontsize=8, color=INK,
-                    arrowprops=dict(arrowstyle='->', color=GREY, lw=0.8) if a.get('xytext') else None)
+        if v.get('label'): ax.annotate(v['label'], (v['x'], 1), xycoords=('data', 'axes fraction'), xytext=(3, -3), textcoords='offset points',
+                                       va='top', fontsize=7.5, color=GREY)
+    notes = [ax.annotate(a['text'], tuple(a['xy']), xytext=tuple(a.get('xytext', a['xy'])), fontsize=8, color=INK,
+                         arrowprops=dict(arrowstyle='->', color=GREY, lw=0.8) if a.get('xytext') else None) for a in spec.get('annotations', [])]
     if spec.get('logx'): ax.set_xscale('log')
     if spec.get('logy'): ax.set_yscale('log')
     if spec.get('xlim'): ax.set_xlim(spec['xlim'])
     if spec.get('ylim'): ax.set_ylim(spec['ylim'])
+    elif spiky and (lim := _robust_ylim(np.concatenate(spiky))): ax.set_ylim(lim)
     if spec.get('xticks') is not None: ax.set_xticks(spec['xticks'])
     if spec.get('yticks') is not None: ax.set_yticks(spec['yticks'])
     if spec.get('equal'): ax.set_aspect('equal', adjustable='datalim')
@@ -196,17 +207,64 @@ def plot(spec, out):
         ax.yaxis.set_label_coords(-0.02, 1.04)
     else:
         ax.set_xlabel(spec.get('xlabel', '')); ax.set_ylabel(spec.get('ylabel', ''))
-    if spec.get('title'): ax.set_title(spec['title'], pad=16 if spec.get('axes_at_zero') and spec.get('ylabel') else 6)
     named = sum(bool(c.get('label')) for c in spec.get('curves', []))
-    if spec.get('legend', named >= 2): legend(ax, named)
+    lh = legend(ax, named) if spec.get('legend', named >= 2) else 0
+    if spec.get('title'): ax.set_title(spec['title'], pad=(16 if spec.get('axes_at_zero') and spec.get('ylabel') else 6) + lh)
+    for t in notes:          # annotation text stays inside the plot box: never in the legend band above it or off the edge
+        fx, fy = ax.transAxes.inverted().transform(ax.transData.transform(t.xyann))
+        fx, fy = min(max(fx, 0.01), 0.99), min(max(fy, 0.03), 0.93)
+        t.xyann = tuple(ax.transData.inverted().transform(ax.transAxes.transform((fx, fy))))
+        if fx > 0.7: t.set_ha('right')
+    untangle(fig, ax, notes)
     return save(fig, out)
 
 
+def _samples(c):
+    """Points for an expression curve: enough for fast oscillations, never so many that drawing hangs."""
+    try: return min(max(int(c.get('n', 2000)), 2), 5000)
+    except (TypeError, ValueError): return 2000
+
+
+def _cut_jumps(y):
+    """An asymptote (1/x, tan x) as a gap, not a vertical line: NaN where y jumps hugely and changes sign."""
+    y = np.where(np.isfinite(y), y, np.nan).astype(float)
+    dy = np.abs(np.diff(y)); med = np.nanmedian(dy) if np.isfinite(dy).any() else 0
+    if med > 0: y[1:][(dy > 50 * med) & (y[1:] * y[:-1] < 0)] = np.nan
+    return y
+
+
+def _robust_ylim(y):
+    """y range without the spikes near an asymptote (1st-99th percentile, padded), or None when there are no spikes."""
+    y = y[np.isfinite(y)]
+    if y.size < 10: return None
+    lo, hi = np.percentile(y, [1, 99])
+    if y.max() - y.min() <= 5 * (hi - lo) or hi <= lo: return None
+    pad = 0.15 * (hi - lo); return lo - pad, hi + pad
+
+
+def untangle(fig, ax, notes):
+    """Move each annotation down, a line at a time, until its text overlaps no other label or the legend."""
+    r = fig.canvas.get_renderer()
+    def text(t):                                   # the text alone, without an annotation's arrow
+        if hasattr(t, 'update_positions'): t.update_positions(r)
+        return matplotlib.text.Text.get_window_extent(t, r)
+    placed = [text(t) for t in ax.texts if t not in notes] + ([ax.get_legend().get_window_extent(r)] if ax.get_legend() else [])
+    for t in notes:
+        step = t.get_fontsize() * fig.dpi / 72 * 1.3
+        for _ in range(6):
+            if not any(text(t).overlaps(p) for p in placed): break
+            x, y = ax.transData.transform(t.xyann)
+            t.xyann = tuple(ax.transData.inverted().transform((x, y - step)))
+        placed.append(text(t))
+
+
 def legend(ax, n):
-    """Above the plot, right-aligned, in one or two rows: clear of the curves, bars and tick labels."""
-    if not ax.get_legend_handles_labels()[0]: return
-    ax.legend(fontsize=8, loc='lower right', bbox_to_anchor=(1, 1.01), ncol=min(max(n, 1), 4), frameon=False, borderaxespad=0,
-              handlelength=1.6, columnspacing=1.2)
+    """Above the plot, right-aligned, in one or two rows: clear of the curves, bars and tick labels.
+    Returns its height in points, so a title can sit above it."""
+    if not ax.get_legend_handles_labels()[0]: return 0
+    leg = ax.legend(fontsize=8, loc='lower right', bbox_to_anchor=(1, 1.01), ncol=min(max(n, 1), 4), frameon=False, borderaxespad=0,
+                    handlelength=1.6, columnspacing=1.2)
+    return leg.get_window_extent(ax.figure.canvas.get_renderer()).height * 72 / ax.figure.dpi + 4
 
 
 # ---------------------------------------------------------------- bars
@@ -215,7 +273,7 @@ def bars(spec, out):
               "xlabel", "ylabel", "title", "values": bool (label bars), "size": [w,h]}"""
     brand()
     cats = spec['categories']; ser = spec['series']; n = len(ser)
-    fig, ax = plt.subplots(figsize=tuple(spec.get('size', (6.4, 3.0))))
+    fig, ax = plt.subplots(figsize=_size(spec))
     x = np.arange(len(cats)); w = 0.8 / (1 if spec.get('stacked') else n); base = np.zeros(len(cats))
     for i, s in enumerate(ser):
         v = np.asarray(s['values'], float); c = col(s.get('color'), PALETTE[i % len(PALETTE)])
@@ -234,8 +292,8 @@ def bars(spec, out):
     if not spec.get('stacked') and (v := np.concatenate([np.asarray(s_['values'], float) for s_ in ser])).min() < 0:
         ax.axhline(0, color=INK, lw=0.8) if not spec.get('horizontal') else ax.axvline(0, color=INK, lw=0.8)
     ax.set_xlabel(spec.get('xlabel', '')); ax.set_ylabel(spec.get('ylabel', ''))
-    if spec.get('title'): ax.set_title(spec['title'])
-    if n > 1 or spec.get('legend'): legend(ax, n)
+    lh = legend(ax, n) if n > 1 or spec.get('legend') else 0
+    if spec.get('title'): ax.set_title(spec['title'], pad=6 + lh)
     return save(fig, out)
 
 
@@ -271,22 +329,22 @@ def graph(spec, out):
     fixed = ds in ('circle', 'doublecircle') and not spec.get('autosize') and all(len(x) <= 4 for x in labels)
     if ds in ('circle', 'doublecircle') and not fixed: ds = 'box'           # circles stay for short state names; long labels sit in compact rounded boxes
     node_style = 'filled,rounded' if ds == 'box' else 'filled'
+    q = lambda s: '"' + str(s).replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'     # every value quoted: nothing breaks the DOT
     L = [('digraph' if directed else 'graph') + ' G {',
-         f'graph [rankdir={spec.get("rankdir", "TB")}, bgcolor=transparent, pad=0.15, nodesep={spec.get("nodesep", 0.35)}, '
-         f'ranksep={spec.get("ranksep", 0.45)}, size="{spec.get("size", "7,4")}", dpi={DPI}, fontname="Poppins"];',
-         f'node [shape={ds}, style="{node_style}", fillcolor="{LAV}", color="{PURPLE}", penwidth=1.4, fontname="Poppins Medium", '
+         f'graph [rankdir={q(spec.get("rankdir", "TB"))}, bgcolor=transparent, pad=0.15, nodesep={float(spec.get("nodesep", 0.35))}, '
+         f'ranksep={float(spec.get("ranksep", 0.45))}, size={q(spec.get("size", "7,6"))}, dpi={DPI}, fontname="Poppins"];',      # 7,6: a big tree may grow downwards
+         f'node [shape={q(ds)}, style="{node_style}", fillcolor="{LAV}", color="{PURPLE}", penwidth=1.4, fontname="Poppins Medium", '
          f'fontsize=11, fontcolor="{INK}", width=0.42, height=0.42, fixedsize={"true" if fixed else "false"}, margin="0.14,0.07"];',
          f'edge [color="{GREY}", penwidth=1.2, fontname="Poppins", fontsize=10, fontcolor="{INK}", arrowsize=0.7];']
-    q = lambda s: '"' + str(s).replace('"', '\\"') + '"'
     for n in spec.get('nodes', []):
         n = n if isinstance(n, dict) else {'id': n}
         a = []
         if 'label' in n:
-            lab = str(n['label']) if n.get('shape') == 'record' else '\\n'.join(node_lines(str(n['label'])))    # long labels wrap onto several lines
+            lab = str(n['label']) if n.get('shape') == 'record' else '\n'.join(node_lines(str(n['label'])))    # long labels wrap onto several lines
             a.append(f'label={q(lab)}')
         if n.get('shape'):
             if n['shape'] in ('circle', 'doublecircle') and len(str(n.get('label', n['id']))) > 4: n = dict(n, shape='box')
-            a.append(f'shape={n["shape"]}')
+            a.append(f'shape={q(n["shape"])}')
         if n.get('shape') in ('box', 'record', 'plaintext', 'ellipse', 'diamond'): a.append('fixedsize=false'); a.append('style="filled,rounded"' if n['shape'] == 'box' else 'style=filled')
         if n.get('shape') == 'plaintext': a.append('fillcolor=white, color=white')
         f = n.get('fill')
@@ -294,7 +352,7 @@ def graph(spec, out):
             fc = col(f); a.append(f'fillcolor="{fc}"')
             if fc in (PURPLE, '#7B5CB8', '#2E8B87', '#B5487A', '#5A7FBF'): a.append('fontcolor=white')
         if n.get('xlabel'): a.append(f'xlabel={q(n["xlabel"])}')
-        if n.get('pos'): a.append(f'pos="{n["pos"]}"')
+        if n.get('pos'): a.append(f'pos={q(n["pos"])}')
         L.append(f'{q(n["id"])} [{", ".join(a)}];')
     if spec.get('start') is not None:
         L.append('__start [shape=point, width=0.01, height=0.01, style=invis];')
@@ -304,8 +362,8 @@ def graph(spec, out):
         a = []
         if e.get('label') is not None: a.append(f'label={q(" " + _fmt(e["label"]) + " ")}')
         if e.get('highlight'): a += [f'color="{PURPLE}"', 'penwidth=3']
-        if e.get('style'): a.append(f'style={e["style"]}')
-        if e.get('dir'): a.append(f'dir={e["dir"]}')
+        if e.get('style') in ('dashed', 'dotted', 'solid', 'bold', 'invis'): a.append(f'style={e["style"]}')
+        if e.get('dir') in ('forward', 'back', 'both', 'none'): a.append(f'dir={e["dir"]}')
         if e.get('constraint') is False: a.append('constraint=false')
         L.append(f'{q(e["from"])} {arrow} {q(e["to"])} [{", ".join(a)}];')
     for grp in spec.get('same_rank', []): L.append('{rank=same; ' + '; '.join(q(x) for x in grp) + ';}')
@@ -342,6 +400,7 @@ def cells(spec, out):
     xs = [sum(cws[:j]) for j in range(ncol)]
     fs = max(6.5, min([9.0] + [9 * (cws[j] - 0.1) / (0.085 * width(text(r['cells'][j]))) for r in rows for j in range(len(r['cells'])) if width(text(r['cells'][j]))]))
     ch = max(ch, 0.62) if any('\n' in wrapped(text(c)) for r in rows for c in r['cells']) else ch
+    ch = max(0.26, min(ch, 7 / len(rows) - 0.12))          # many rows: lower cells, so the grid stays about a page high
     total = sum(cws)
     fig = plt.figure(figsize=(lab_w + total + 0.2, len(rows) * (ch + 0.12) + 0.45))
     ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(-lab_w, total + 0.1); ax.set_ylim(-0.1, len(rows) * (ch + 0.12) + 0.35); ax.axis('off')
@@ -487,30 +546,42 @@ GREEK = {'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': '
          'infty': '∞', 'cdot': '·', 'times': '×', 'leq': '≤', 'le': '≤', 'geq': '≥', 'ge': '≥', 'neq': '≠', 'pm': '±', 'to': '→',
          'rightarrow': '→', 'circ': '°', 'deg': '°', 'approx': '≈'}
 SUB = str.maketrans('0123456789', '₀₁₂₃₄₅₆₇₈₉')
+MATHTEXT = matplotlib.mathtext.MathTextParser('path')
 
 
-def text_label(s):
-    """A figure label as readable text: \\u00bd -> ½, \\omega -> ω, x_0 -> x₀. Labels inside $...$ stay maths."""
-    if '$' in s or ('\\' not in s and '_' not in s): return s
+def text_label(s, plain=False):
+    """A figure label as readable text: \\u00bd -> ½, \\omega -> ω, x_0 -> x₀, \\frac{1}{2} -> 1/2. Labels inside $...$ stay maths
+    when they draw (a missing closing $ is added), and so does TeX written without $ that text cannot show (\\frac, \\sqrt);
+    maths that does not draw becomes text. plain: the figure cannot draw maths at all (graphviz)."""
+    if '$' in s and not plain:
+        m = s + '$' if s.count('$') % 2 else s
+        try: MATHTEXT.parse(m); return m
+        except Exception: pass
+    s = s.replace('$', '')
+    if '\\' not in s and '_' not in s: return s
     tex = bool(re.search(r'\\[A-Za-z]{2,}', s))           # braces are TeX grouping only in a TeX label; {1,2} elsewhere is a set
+    if tex and not plain and re.search(r'\\(?!(?:%s)\b)[A-Za-z]{2,}' % '|'.join(GREEK), s):
+        try: MATHTEXT.parse(f'${s}$'); return f'${s}$'
+        except Exception: pass
+    s = re.sub(r'\\frac\{([^{}]*)\}\{([^{}]*)\}', lambda m: '/'.join(x if re.fullmatch(r'\w*', x) else f'({x})' for x in m.groups()), s)
     s = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
     s = re.sub(r'\\([A-Za-z]+)', lambda m: GREEK.get(m.group(1), m.group(1)), s)
     s = re.sub(r'_\{?(\d+)\}?', lambda m: m.group(1).translate(SUB), s)
     return s.replace('{', '').replace('}', '') if tex else s
 
 
-def labels(x, key=None):
+def labels(x, key=None, plain=False):
     """Every text in a spec through text_label, except expressions that are evaluated."""
     if key in ('expr', 'param'): return x
-    if isinstance(x, str): return text_label(x)
-    if isinstance(x, list): return [labels(v, key) for v in x]
-    if isinstance(x, dict): return {k: labels(v, k) for k, v in x.items()}
+    if isinstance(x, str): return text_label(x, plain)
+    if isinstance(x, list): return [labels(v, key, plain) for v in x]
+    if isinstance(x, dict): return {k: labels(v, k, plain) for k, v in x.items()}
     return x
 
 
 def render(kind, spec, out=None):
     """Render a figure (cached by content hash); returns the PNG path."""
-    spec = labels(spec)
+    spec = labels(spec, plain=kind == 'graph')         # graphviz draws text only
     if kind not in KINDS: raise ValueError(f'unknown figure kind {kind!r}; use one of {sorted(KINDS)} or an image block')
     os.makedirs(CACHE, exist_ok=True)
     key = hashlib.md5(json.dumps([kind, spec], sort_keys=True).encode()).hexdigest()[:16]

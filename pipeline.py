@@ -40,6 +40,7 @@ def fill(template, **values):
 def figure_reference():
     """The exact spec of every figure kind, generated from the figure code (run in a subprocess: no matplotlib here)."""
     r = subprocess.run([sys.executable, os.path.join(RENDER, 'figures.py'), '--reference'], capture_output=True, timeout=120)
+    if r.returncode: raise RuntimeError('the figure reference could not be made: ' + r.stderr.decode('utf-8', 'replace')[-300:])    # not cached
     return r.stdout.decode('utf-8')
 
 
@@ -55,6 +56,11 @@ def log(run_id, rt_id, text):
     db.sql('insert into logs (run_id, run_topic_id, text) values (%s,%s,%s)', (run_id, rt_id, text[:500]))
 
 
+def add(usage, u):
+    """Add a call's usage (None when a failed call spent nothing) to a step's running total."""
+    for k in usage: usage[k] += (u or {}).get(k, 0)
+
+
 class Job:
     """One run_topic being processed: saved steps, model calls with tidy/check/repair, warnings, progress, cost cap."""
 
@@ -64,7 +70,10 @@ class Job:
         self.feedback = (run['options'] or {}).get('feedback')
 
     def _guard(self):
-        if db.sql('select status from runs where id=%s', (self.run['id'],))[0]['status'] == 'cancelled': raise Cancelled()
+        """Before each step: stop on cancel, and at the cap (parallel calls charge it, so check before starting another)."""
+        r = db.sql('select status, cost_usd >= cost_cap as capped from runs where id=%s', (self.run['id'],))[0]
+        if r['status'] == 'cancelled': raise Cancelled()
+        if r['capped']: raise CapReached()
 
     def log(self, text): log(self.run['id'], self.rt['id'], text)
 
@@ -81,20 +90,21 @@ class Job:
         rows = db.sql('select output from steps where run_topic_id=%s and name=%s', (self.rt['id'], name))
         return rows[0]['output'] if rows else None
 
-    def charge(self, usage, name):
+    def charge(self, usage, name, provider=None):
         """Add the cost of a model call to the topic, the run and the usage history; stop the run at its cap."""
         if not usage['cost']: return
+        provider = provider or self.provider
         db.event(self.run['created_by'], 'model call', self.run['id'], usage['cost'], topic=self.rt['name'], step=name,
-                 provider=self.provider, model=PROVIDERS[self.provider]['model'], input_tokens=usage['in'], output_tokens=usage['out'])
+                 provider=provider, model=PROVIDERS[provider]['model'], input_tokens=usage['in'], output_tokens=usage['out'])
         db.sql('update run_topics set cost_usd = cost_usd + %s where id=%s', (usage['cost'], self.rt['id']))
         run = db.sql('update runs set cost_usd = cost_usd + %s, heartbeat_at=now() where id=%s returning cost_usd, cost_cap', (usage['cost'], self.run['id']))[0]
         if run['cost_usd'] >= run['cost_cap']: raise CapReached()
 
-    def save(self, name, output, usage):
+    def save(self, name, output, usage, provider=None):
         db.sql('insert into steps (run_topic_id, name, output, input_tokens, output_tokens, cost_usd) values (%s,%s,%s::jsonb,%s,%s,%s) '
                'on conflict (run_topic_id, name) do update set output=excluded.output, input_tokens=excluded.input_tokens, '
                'output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd', (self.rt['id'], name, json.dumps(output), usage['in'], usage['out'], usage['cost']))
-        self.charge(usage, name)
+        self.charge(usage, name, provider)
 
     def step(self, name, fn):
         """A step that makes no model call of its own. Runs once; the output is saved."""
@@ -108,7 +118,7 @@ class Job:
 
     def _call(self, prompt, usage, provider=None, max_tokens=None):
         out, u, raw = llm.generate_json(provider or self.provider, self.system, prompt, max_tokens)
-        for k in usage: usage[k] += u[k]
+        add(usage, u)
         return out, raw
 
     def _repair(self, name, out, probs, tidy, usage, provider=None):
@@ -121,7 +131,8 @@ class Job:
         items = [{'ref': C.ref(p), 'problems': ms, 'current': current(p)} for p, ms in by_path.items()]
         self.log(f'{name}: sending {len(items)} item(s) back for repair: ' + '; '.join(f"{C.label(p, out)}: {ms[0][:80]}" for p, ms in list(by_path.items())[:3]))
         try: reply, _ = self._call(fill(read('repair.md'), ITEMS=json.dumps(items, ensure_ascii=False)), usage, provider, REPAIR_TOKENS)
-        except llm.LLMError as e: self.log(f'{name}: the repair call failed: {e}'); return out
+        except Exception as e:          # a failed repair keeps the reply as it was (what is broken is left out later)
+            add(usage, getattr(e, 'usage', None)); self.log(f'{name}: the repair call failed: {type(e).__name__}: {e}'); return out
         for f in (reply.get('fixes') if isinstance(reply, dict) else None) or []:
             p = C.unref(f.get('ref', '')) if isinstance(f, dict) else None
             if p in by_path and 'value' in f and same_kind(current(p), f['value']):
@@ -131,10 +142,13 @@ class Job:
 
     def _settle(self, name, out, probs, warn_soft=True):
         """Leave out what is still broken; warn about requirements that are still not met."""
-        hard = [(p, m) for p, m, h in probs if h and p]
+        hard = [(p, m) for p, m, h in probs if h and len(p) > 1]       # a whole part (sample paper, traps...) is kept and noted, never dropped
+        probs = [(p, m, h and len(p) > 1) for p, m, h in probs]
         if hard:
             names = [f'{C.label(p, out)} ({m[:90]})' for p, m in hard[:4]]
-            C.drop(out, [p for p, _ in hard])
+            C.drop(out, [p for p, _ in hard if len(p) > 2 or p[0] not in ('notes', 'topics')])
+            for p, _ in hard:           # a whole section or topic is emptied, not removed, so the rest keep their places (and titles)
+                if len(p) == 2 and p[0] in ('notes', 'topics'): C.get(out, p)['blocks'] = []
             self.warn(f'{len(hard)} item(s) were left out because they were still broken after a repair: ' + '; '.join(names) + (' ...' if len(hard) > 4 else ''))
         if warn_soft:
             for p, m, h in probs:
@@ -145,7 +159,7 @@ class Job:
         go back for one repair; what is still broken is left out. The result is saved, so Resume never pays twice."""
         self._guard()
         out = self.saved(name)
-        if out is not None: self.log(f'{name}: reused from an earlier attempt (no cost)'); return out
+        if out is not None: self.log(f'{name}: reused from an earlier attempt (no cost)'); return tidy(out)    # tidied again: it may be saved by an older version
         if self.feedback: user += f'\n\nExtra instructions from the user for this PDF: {self.feedback}'
         usage, out, raw, probs = {'in': 0, 'out': 0, 'cost': 0.0}, None, '', []
         for attempt in range(2):
@@ -153,6 +167,7 @@ class Job:
                 out, raw = self._call(user if not attempt else user + RETRY.format(problems='; '.join(m for _, m, _ in probs[:4])), usage, provider)
                 out = tidy(out); probs = problems(out)
             except llm.LLMError as e:
+                add(usage, e.usage)         # a failed call is paid for too
                 out, raw, probs = None, e.raw or raw, [((), str(e), True)]
             whole = [m for p, m, h in probs if not p and h]
             if out is not None and not whole: break
@@ -160,14 +175,14 @@ class Job:
         if out is None or any(not p and h for p, _, h in probs):
             db.sql('insert into steps (run_topic_id, name, output, cost_usd) values (%s,%s,%s::jsonb,%s) on conflict (run_topic_id, name) do update set output=excluded.output',
                    (self.rt['id'], name + '_failed', json.dumps({'raw': raw[:200_000], 'problems': [m for _, m, _ in probs]}), usage['cost']))
-            self.charge(usage, name + '_failed')
+            self.charge(usage, name + '_failed', provider)
             raise llm.LLMError(f'the model could not produce a usable "{name}" part: ' + '; '.join(m for _, m, _ in probs[:2]))
         items = [x for x in probs if x[0]]
         if items:
             out = self._repair(name, out, items, tidy, usage, provider)
             probs = problems(out)
         self._settle(name, out, probs)
-        self.save(name, out, usage)
+        self.save(name, out, usage, provider)
         self.log(f'{name}: done ({usage["in"]} tokens in, {usage["out"]} out, ${usage["cost"]:.3f})')
         return out
 
@@ -181,7 +196,7 @@ class Job:
         out = self._repair(name, json.loads(json.dumps(obj)), probs, tidy, usage, provider)
         describe(out)
         self._settle(name, out, [x for x in problems(out) if x[2]], warn_soft=False)
-        self.save(name, out, usage)
+        self.save(name, out, usage, provider)
         return out
 
 
@@ -206,16 +221,18 @@ def run_book(run):
 
 def render_and_store(job, mode, content):
     """Render the PDF in a subprocess, upload PDF and JSON, mark the topic finished."""
-    folder = tempfile.mkdtemp(); src, pdf = os.path.join(folder, 'content.json'), os.path.join(folder, 'out.pdf')
-    json.dump(content, open(src, 'w', encoding='utf-8'))
-    r = subprocess.run([sys.executable, os.path.join(RENDER, f'render_{mode}.py'), src, pdf], capture_output=True, text=True, encoding='utf-8', timeout=600)
-    if r.returncode: raise RuntimeError('PDF rendering failed: ' + r.stderr[-300:])
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+        src, pdf = os.path.join(folder, 'content.json'), os.path.join(folder, 'out.pdf')
+        with open(src, 'w', encoding='utf-8') as f: json.dump(content, f)
+        r = subprocess.run([sys.executable, os.path.join(RENDER, f'render_{mode}.py'), src, pdf], capture_output=True, text=True, encoding='utf-8', timeout=600)
+        if r.returncode: raise RuntimeError('PDF rendering failed: ' + r.stderr[-300:])
+        with open(pdf, 'rb') as f: data = f.read()
     try: report = json.loads(r.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError): report = {}
     for w in report.get('warnings', [])[:10]: job.warn('In the PDF: ' + w)
     base = f"{job.run['id']}/{job.rt['id']}"
-    job.log(f'PDF rendered ({os.path.getsize(pdf) // 1024} KB), uploading')
-    db.upload('outputs', base + '.pdf', open(pdf, 'rb').read(), 'application/pdf')
+    job.log(f'PDF rendered ({len(data) // 1024} KB), uploading')
+    db.upload('outputs', base + '.pdf', data, 'application/pdf')
     db.upload('outputs', base + '.json', json.dumps(content, ensure_ascii=False).encode('utf-8'), 'application/json')
     warns = db.sql('select warnings from run_topics where id=%s', (job.rt['id'],))[0]['warnings']
     db.sql("update run_topics set status=%s, step='done', pdf_path=%s, json_path=%s where id=%s", ('warnings' if warns else 'done', base + '.pdf', base + '.json', job.rt['id']))
@@ -232,8 +249,11 @@ def pyq_step(job, topic, o):
         except Exception as e: job.warn(f'PYQ source could not be read ({url}): {e}')
     if not texts: return []
     prompts = [fill(read('gate/pyq_extract.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], SOURCE=text[:120_000]) for text in texts]
+    def extract(k, prompt):         # PYQs are optional: a source the model cannot read only costs its questions
+        try: return job.ask(f'pyq_{k}', prompt, tidy=C.pyq_questions)['questions']
+        except llm.LLMError as e: job.warn(f'PYQ source {k + 1} could not be read: {e}'); return []
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
-        found = [q for out in pool.map(lambda a: job.ask(f'pyq_{a[0]}', a[1], tidy=C.pyq_questions), enumerate(prompts)) for q in out['questions']]
+        found = [q for qs in pool.map(extract, range(len(prompts)), prompts) for q in qs]
     kept, dropped = pyq.keep_verified(found, texts)
     job.log(f'PYQs: {len(found)} found in {len(texts)} source(s), {len(kept)} verified, {len(dropped)} dropped')
     kept = list({re.sub(r'\W+', '', q['question'].lower())[:80]: q for q in kept}.values())[:8]
@@ -266,10 +286,12 @@ def verify(job, topic, o, notes, q):
             elif b.get('type') == 'figure':
                 items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'figure': figure_brief(b)})
     valid = {x['ref'] for x in items}
-    keep = lambda out, k: [i for i in (out.get(k) if isinstance(out, dict) else None) or [] if isinstance(i, dict) and i.get('ref') in valid]
+    keep = lambda out, k: [i for i in C._list(out.get(k) if isinstance(out, dict) else None) if isinstance(i, dict) and isinstance(i.get('ref'), str) and i['ref'] in valid]
     tidy = lambda out: {'issues': keep(out, 'issues'), 'weak': keep(out, 'weak')[:6]}
-    found = job.ask('verify', fill(read('gate/verify.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], ITEMS=json.dumps(items, ensure_ascii=False)),
-                    tidy=tidy, provider=provider)
+    try: found = job.ask('verify', fill(read('gate/verify.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], ITEMS=json.dumps(items, ensure_ascii=False)),
+                         tidy=tidy, provider=provider)
+    except llm.LLMError as e:       # the second check is optional: without it the PDF is still made, with a warning
+        job.warn(f'The second check failed ({str(e)[:150]}). ' + UNCHECKED_NOTE); return notes, q
     issues, weak = found['issues'], found.get('weak', [])
     job.log(f'Second check ({provider}): {len(issues)} of {len(items)} items disputed, {len(weak)} found weak')
     if not issues and not weak: return notes, q
@@ -291,7 +313,11 @@ def verify(job, topic, o, notes, q):
             try: changed = C.get(obj, p) != C.get(fixed, p)
             except (KeyError, IndexError, TypeError): continue
             job.warn(f"{C.label(p, fixed)}: {'rewritten' if changed else 'kept as it was'} after a quality review ({str(w.get('problem', ''))[:140]}).")
-    fixed = job.revise('verify_fix', obj, probs, lambda x: {**C.gate_notes(x), **C.gate_questions(x)}, lambda x: C.gate_questions_problems(x, o['paper']), describe)
+    levels = [x.get('level') for x in q['practice']]
+    def tidy_fix(x):                # a fixed question keeps its level, so the level sort cannot move it (describe compares by position)
+        for v, lvl in zip(x['practice'], levels): v['level'] = lvl
+        return {**C.gate_notes(x), **C.gate_questions(x)}
+    fixed = job.revise('verify_fix', obj, probs, tidy_fix, lambda x: C.gate_questions_problems(x, o['paper']), describe)
     return fixed['notes'], {k: fixed[k] for k in ('practice', 'sample_paper', 'traps', 'revision_card')}
 
 
@@ -328,8 +354,9 @@ def gate(job):
 
     def write_notes(k, group):
         others = ', '.join(s['heading'] for s in sections if s not in group) or '(none)'
-        return job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes),
-                       tidy=lambda x: C.align_notes(C.gate_notes(x), group), problems=lambda out: C.gate_notes_problems(out, group))['notes']
+        out = job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes),
+                      tidy=lambda x: C.align_notes(C.gate_notes(x), group), problems=lambda out: C.gate_notes_problems(out, group))
+        return [n for n in out['notes'] if n['blocks']]        # a section still broken after its repair was emptied: left out
 
     job.progress('Writing notes and questions (at the same time)')
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
@@ -392,7 +419,7 @@ def nongate(job):
                                           OTHERS=', '.join(t['title'] for t in plan_topics if t not in group) or '(none)',
                                           BOOK_NOTE=book_note(any(ctx['found'][j] for j in js), book_text), BOOK=book_text),
                       tidy=C.nongate_topics, problems=lambda out: C.nongate_topics_problems(out, len(group)))
-        return [{'title': g['title'], 'tagline': g.get('tagline', ''), 'blocks': t['blocks']} for g, t in zip(group, out['topics'])]
+        return [{'title': g['title'], 'tagline': g.get('tagline', ''), 'blocks': t['blocks']} for g, t in zip(group, out['topics']) if t['blocks']]   # emptied: still broken
 
     job.progress(f'Writing {len(plan_topics)} topics (at the same time)')
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:

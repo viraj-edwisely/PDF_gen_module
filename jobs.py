@@ -57,7 +57,9 @@ def _heartbeat(run_id):
     """Keeps runs.heartbeat_at fresh during long model calls, so only a dead worker looks 'interrupted'."""
     stop = threading.Event()
     def beat():
-        while not stop.wait(10): db.sql('update runs set heartbeat_at=now() where id=%s', (run_id,))
+        while not stop.wait(10):
+            try: db.sql('update runs set heartbeat_at=now() where id=%s', (run_id,))
+            except Exception: pass          # a database hiccup must not end the heartbeat (the run would look interrupted)
     threading.Thread(target=beat, daemon=True).start()
     try: yield
     finally: stop.set()
@@ -72,15 +74,22 @@ def _topic(rt):
         except pipeline.CapReached: _stop(run['id'], rt['id'], 'stopped', 'stopped: cost cap reached'); pipeline.log(run['id'], rt['id'], 'Stopped: cost cap reached')
         except pipeline.Cancelled: _stop(run['id'], rt['id'], 'cancelled', 'cancelled'); pipeline.log(run['id'], rt['id'], 'Cancelled')
         except Exception as e:
-            db.sql("update run_topics set status='failed', error=%s where id=%s", (f'{type(e).__name__}: {e}'[:1000], rt['id']))
-            pipeline.log(run['id'], rt['id'], f'FAILED: {type(e).__name__}: {e}')
-            db.event(run['created_by'], 'pdf failed', run['id'], topic=rt['name'], error=f'{type(e).__name__}: {e}'[:200])
+            err = f'{type(e).__name__}: {e}'.replace('\x00', '')      # the database refuses NUL characters
+            try:
+                db.sql("update run_topics set status='failed', error=%s where id=%s", (err[:1000], rt['id']))
+                pipeline.log(run['id'], rt['id'], f'FAILED: {err}')
+                db.event(run['created_by'], 'pdf failed', run['id'], topic=rt['name'], error=err[:200])
+            except Exception:       # a database hiccup: one more try, so the topic does not stay 'running'
+                time.sleep(5); db.sql("update run_topics set status='failed', error=%s where id=%s", (err[:1000], rt['id']))
     db.sql(FINISH, {'id': run['id']})
 
 
 def _book(b):
     def progress(frac, msg): db.sql('update books set progress=%s, step=%s where id=%s', (frac, msg, b['id']))
-    try: ingest.ingest(b['id'], db.download('books', b['storage_path']), progress)
+    try: data = db.download('books', b['storage_path'])
+    except Exception as e:
+        db.sql("update books set status='failed', error=%s where id=%s", (f'the uploaded file could not be read from storage: {e}'[:500], b['id'])); return
+    try: ingest.ingest(b['id'], data, progress)
     except Exception: pass                  # ingest() records the error on the book
 
 

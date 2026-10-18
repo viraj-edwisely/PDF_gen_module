@@ -1,5 +1,5 @@
 """Generate page: what to make, from which book, which topics, the details; then review and start the run."""
-import io
+import io, json, time
 import pandas as pd
 import streamlit as st
 import db, jobs, llm, pyq
@@ -144,10 +144,15 @@ with st.container(border=True):
     st.markdown(f"**{what}** · writer {provider} · source: {src}{' · with your prompt' if options['prompt'] else ''}\n\n"
                 f"Estimated cost **about ${estimate:.2f}**, time **about {minutes} minutes**. A run stops by itself at ${COST_CAP:.0f}; finished PDFs are kept.")
     if errors: st.info('Still needed: ' + ' '.join(errors))
+    same = json.dumps([mode, provider, book and book['id'], start, end, options, sorted(sources)], sort_keys=True, default=str)
+    last = st.session_state.get('last_run')                   # (settings, time, run id): a double click must not start the run twice
     if st.button('Generate', type='primary', disabled=bool(errors)):
+        if last and last[0] == same and time.time() - last[1] < 120:
+            st.info(f'Run #{last[2]} with these settings was started a moment ago. Change something, or wait two minutes, to start another.'); st.stop()
         try: options['pyq'] = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
                                for t, (kind, got) in sources.items()}
-        except Exception as e: st.error(f'A PYQ file could not be read ({type(e).__name__}: {e}). Save it again as PDF or .docx and retry.'); st.stop()
+        except Exception as e: st.error(f'A PYQ file could not be read: {e}. Save it again as a digital PDF or .docx and retry.'); st.stop()
         run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), provider, options, user())
+        st.session_state.last_run = (same, time.time(), run_id)
         st.success(f'Run #{run_id} started.')
         st.page_link('views/runs.py', label='Open the Runs page to follow it', icon='📄')

@@ -75,7 +75,7 @@ def check(path):
                 try:
                     v = float(str(q.get('answer')).split()[0])
                     if v != int(v) and not ROUND.search(stem): E.append(f'{where}: non-integer NAT answer but the stem gives no rounding instruction ("rounded off to two decimal places")')
-                except ValueError: E.append(f'{where}: NAT answer must be a number (ranges go in "answer_range")')
+                except (ValueError, IndexError, OverflowError): E.append(f'{where}: NAT answer must be a number (ranges go in "answer_range")')
                 if not q.get('answer_range'): W.append(f'{where}: add "answer_range" (GATE keys accept a range, e.g. "7.19 to 7.21")')
                 if '___' not in stem: W.append(f'{where}: NAT stems end with a blank "______" and the unit/rounding')
         if original and q.get('source'): E.append(f'{where}: original questions must not carry a GATE source tag')

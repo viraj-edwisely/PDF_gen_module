@@ -47,3 +47,21 @@ def test_circuit_anchors_are_positions_in_the_drawing():
 
 def test_labels_written_as_latex_read_as_text():
     assert figures.text_label(r'X(j\omega)') == 'X(jω)' and figures.text_label('{1,2}') == '{1,2}'
+    assert figures.text_label(r'base $e^{-2t}u(t)') == r'base $e^{-2t}u(t)$'          # missing closing $ (Fourier PDF, page 11)
+    assert figures.text_label(r'$\nosuchcommand{x}$ y') == 'nosuchcommandx y'              # maths that cannot draw: text
+
+
+def test_annotations_stay_clear_of_the_legend_and_each_other(tmp_path):
+    import matplotlib.pyplot as plt
+    spec = {'curves': [{'expr': 'x', 'range': [0, 1], 'label': 'a long legend label'}, {'expr': '1-x', 'range': [0, 1], 'label': 'another label'}],
+            'annotations': [{'xy': [0.8, 0.8], 'text': 'note one', 'xytext': [0.8, 1.2]}, {'xy': [0.8, 0.8], 'text': 'note two', 'xytext': [0.8, 1.2]}],
+            'xlabel': 'x'}
+    shown = []
+    real = figures.save
+    figures.save = lambda fig, out: shown.append(fig) or real(fig, out)
+    try: figures.plot(figures.labels(spec), str(tmp_path / 'a.png'))
+    finally: figures.save = real
+    fig = shown[0]; ax = fig.axes[0]; r = fig.canvas.get_renderer()
+    import matplotlib.text
+    boxes = [t.update_positions(r) or matplotlib.text.Text.get_window_extent(t, r) for t in ax.texts] + [ax.get_legend().get_window_extent(r)]   # text, not arrows
+    assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1:])

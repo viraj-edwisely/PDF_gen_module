@@ -53,7 +53,7 @@ def answer_line(q, label):
 
 
 def main():
-    c = json.load(open(sys.argv[1], encoding='utf-8')); out = sys.argv[2]
+    c = printable(json.load(open(sys.argv[1], encoding='utf-8'))); out = sys.argv[2]
     paper = c.get('paper', '').upper()
     footer_txt = f"GATE Readiness Programme · {paper} · {c.get('subject', '')}"
     logo_w = LOGO_WHITE
@@ -63,7 +63,7 @@ def main():
         cv.setFillColor(PURPLE); cv.rect(0, H - band, W, band, stroke=0, fill=1)
         lw = 34 * mm; cv.drawImage(logo_w, M, H - 19 * mm, lw, lw * 262 / 644, mask='auto')
         cv.setFillColor(YEL); cv.rect(M, H - band + 5 * mm, 26 * mm, 2.2 * mm, stroke=0, fill=1)
-        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, 'Edwisely · ' + footer_txt)
+        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, fit('Edwisely · ' + footer_txt, 'Body', 7.5, W - 2 * M - 50))
         cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}'); cv.restoreState()
 
     def later(cv, doc):
@@ -73,7 +73,7 @@ def main():
         room = W - 2 * M - 12; left = f"{paper} · {c.get('subject', '')}"
         left_w = min(pdfmetrics.stringWidth(left, 'HeadM', 8.5), room * 0.4)          # a long subject and a long topic name must not overlap
         cv.setFont('HeadM', 8.5); cv.drawString(M, H - 6 * mm, fit(left, 'HeadM', 8.5, left_w))
-        cv.setFont('HeadR', 8); cv.drawRightString(W - M, H - 6 * mm, fit(c['topic_name'], 'HeadR', 8, room - left_w))
+        cv.setFont('HeadR', 8); cv.drawRightString(W - M, H - 6 * mm, fit(plain(c['topic_name']), 'HeadR', 8, room - left_w))
         cv.setStrokeColor(LINE); cv.line(M, 14 * mm, W - M, 14 * mm)
         cv.setFont('Body', 7.5); cv.setFillColor(GREY)
         cv.drawString(M, 10 * mm, fit(footer_txt, 'Body', 7.5, W / 2 - 45 - M) if c.get('contents', True) else footer_txt)
@@ -84,7 +84,7 @@ def main():
             cv.drawString(x0, 10 * mm, lab); cv.linkRect('', 'contents', (x0 - 2, 8.5 * mm, x0 + tw + 2, 13 * mm), relative=0, thickness=0)
         cv.restoreState()
 
-    doc = TopicDoc(out, pagesize=A4, title=f"{c['topic_name']} - {paper} GATE", author='Edwisely',
+    doc = TopicDoc(out, pagesize=A4, title=f"{plain(c['topic_name'])} - {paper} GATE", author='Edwisely',
                           leftMargin=M, rightMargin=M, topMargin=16 * mm, bottomMargin=18 * mm)
     fr1 = Frame(M, 18 * mm, W - 2 * M, H - 18 * mm - 20 * mm, id='f1')
     fr2 = Frame(M, 18 * mm, W - 2 * M, H - 18 * mm - 16 * mm, id='f2')
@@ -96,7 +96,7 @@ def main():
     kick = f"{paper} · {c.get('subject', '').upper()}"
     head = [Paragraph(html.escape(kick), S['kicker']), Spacer(1, 6), Paragraph(rich(c['topic_name'], color='#FFFFFF'), S['title']),
             Spacer(1, 6), Paragraph(rich(c.get('subtitle', 'Topic guide: concept notes, worked examples, previous-year GATE questions, practice and sample paper'), color='#FFFFFF'), S['sub'])]
-    head_h = max(60 * mm, sum(p.wrap(W - 2 * M, 0)[1] for p in head if isinstance(p, Paragraph)) + 6 + 4 + 6)     # a long title or subtitle makes the purple band taller
+    head_h = max(60 * mm, sum(p.wrap(W - 2 * M - 6, H)[1] for p in head) + 4 + 3 + 9 * mm)     # a long title or subtitle makes the purple band taller (cell padding 6 pt right, 4+3 pt; 9 mm for the yellow bar under the text)
     band = 20 * mm + head_h + 4 * mm
     ht = Table([[head]], colWidths=[W - 2 * M], rowHeights=[head_h])
     ht.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 4)]))

@@ -93,7 +93,7 @@ def test_failures_seen_in_real_pdfs():
     # an MSQ whose options are letter combinations is malformed
     msq = {'qtype': 'MSQ', 'question': 'A. x B. y', 'options': ['A, B, C', 'A, C, D', 'B, C, D', 'A, B, D'], 'answer': 'A'}
     assert C.question_checks(C.question(msq), ('practice', 2))
-    assert llm.stuck('{"a": 1' + '}]' * 300) and not llm.stuck('ordinary words ' * 40)
+    assert llm.stuck('{"a": 1' + '}]' * 2000) and not llm.stuck('ordinary words ' * 40)
 
 
 def test_notes_are_matched_to_the_plan():
@@ -124,3 +124,21 @@ def test_name_sake_content_is_flagged():
     assert C.example_problems({'type': 'example', 'problem': 'What happens?', 'solution': 'P1 pre-empts P3.'}, ()) == []   # conceptual
     assert C.figure_problems({'kind': 'graph', 'spec': {'nodes': ['a', 'b']}}, ())
     assert C.figure_problems({'kind': 'plot', 'spec': {'curves': []}}, ())
+    exp = {'x': [0, 1, 2, 3, 4, 5], 'y': [1, 0.135, 0.018, 0.002, 0.0003, 0]}          # e^{-2t} as six points: jagged
+    assert any('expr' in m for _, m, _ in C.figure_problems({'kind': 'plot', 'spec': {'xlabel': 't', 'curves': [exp]}}, ()))
+    for shape in ({'x': [-2, -1, -1, 1, 1, 2], 'y': [0, 0, 1, 1, 0, 0]}, {'x': [0, 1, 2, 3, 4, 5, 6], 'y': [0, 1, 0, 1, 0, 1, 0]}):   # pulse, triangle wave
+        assert not C.figure_problems({'kind': 'plot', 'spec': {'xlabel': 't', 'curves': [shape]}}, ())
+
+
+def test_parse_json_escapes_and_wrapping():
+    """Audit cases: \\uXXXX escapes, LaTeX commands that start like JSON escapes, prose with braces, NUL, lists."""
+    import llm
+    assert llm.parse_json(r'{"a": "90° → 𝑥 ꯍ"}') == {'a': '90° → 𝑥 ꯍ'}
+    for cmd in ('boxed{5}', 'bigcup', 'bmod', 'because', 'bot', 'fbox{x}', 'textit{x}', 'texttt{x}', 'therefore', 'triangleq', 'tag{1}',
+                'nleq', 'ngeq', 'nexists', 'newline', 'rvert', 'rbrace', 'rightleftharpoons', 'notin', 'underline{x}', 'frac{1}{2}'):
+        assert llm.parse_json('{"a": "$\\' + cmd + '$"}') == {'a': '$\\' + cmd + '$'}, cmd
+    assert llm.parse_json(r'{"a": "one\nThe\ni.e. x\ni) y\ne) z\t1", "b": "$\ni$ $\ne 1$"}') == {'a': 'one\nThe\ni.e. x\ni) y\ne) z\t1', 'b': r'$\ni$ $\ne 1$'}
+    assert llm.parse_json('Using format {x}: {"a": 1} Let me know if {you} need more') == {'a': 1}
+    assert llm.parse_json('[{"a": 1}]') == {'a': 1}
+    assert llm.parse_json(r'{"a": "x\\u0000", "b": "y\u0000z"}') == {'a': r'x\u0000', 'b': 'yz'}
+    assert not llm.stuck('[' + '0,' * 1400)
