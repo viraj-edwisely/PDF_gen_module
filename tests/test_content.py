@@ -72,7 +72,7 @@ def test_failures_seen_in_real_pdfs():
     # LaTeX with one backslash: \frac must not become a form feed, \right not a carriage return
     o = llm.parse_json(r'{"a": "$\frac{1}{2}$ \right) \theta", "b": "one\nTwo"}')
     assert o == {'a': r'$\frac{1}{2}$ \right) \theta', 'b': 'one\nTwo'}
-    # LaTeX symbols that are not JSON escapes (Gemini, Graphs PDF): \{ \, \% \_ \; \! \| \( and digits
+    # LaTeX symbols that are not JSON escapes (Graphs PDF): \{ \, \% \_ \; \! \| \( and digits
     o = llm.parse_json(r'{"a": "$V = \{1, 2\}$, $a\,b\;c\!d$, 50\% of x\_1, \|E\|, \(x\) \\ \2", "b": "line\nnext \"q\" \/ ½"}')
     assert o == {'a': r'$V = \{1, 2\}$, $a\,b\;c\!d$, 50\% of x\_1, \|E\|, \(x\) \ \2', 'b': 'line\nnext "q" / ½'}
     assert llm.parse_json('{"a": "two\nlines"}') == {'a': 'two\nlines'}       # a raw line break inside a string

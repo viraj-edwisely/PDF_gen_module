@@ -16,11 +16,8 @@ Plan and design decisions: `../PLAN.md`.
 3. **Project Settings → API Keys** → copy the project URL (`SUPABASE_URL`) and the **service_role** key (`SUPABASE_KEY`).
 4. Nothing else: the app creates its tables, the vector extension and the two storage buckets on first start.
 
-### 2. AI provider keys
-- `OPENAI_API_KEY` is **always required** (book search uses OpenAI embeddings).
-- Add `ANTHROPIC_API_KEY` for Claude. OpenAI (same key as above) can also be a writer.
-- **Gemini runs on Vertex AI with a service account, not an API key.** In Google Cloud: enable the Vertex AI API on your project, create a service account with the **Vertex AI User** role, create a JSON key for it, and paste the whole file into the secret `GOOGLE_SERVICE_ACCOUNT_JSON` (between triple quotes, see `.streamlit/secrets.toml.example`). Optionally set `GOOGLE_CLOUD_LOCATION` (default `global`).
-- A writer only appears in the app when its credential is set.
+### 2. OpenAI key
+- `OPENAI_API_KEY` is the only AI key: it runs the writer model (`gpt-6-luna`, set in `config.py`) and the book search (embeddings). On the Generate page each run gets a **thinking level** (low, medium, high).
 
 ### 3. Deploy on Streamlit Community Cloud
 1. Put the **contents of this `app` folder at the root of a private GitHub repository** (so `streamlit_app.py`, `requirements.txt`, `packages.txt` are at the top level).
@@ -50,9 +47,9 @@ python tests/stress_pdf.py stress.pdf    # after a renderer change: every formul
 ## How it works (short)
 - `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model (a scope up to 16k tokens is sent whole; a larger one is searched, and each GATE notes call searches its own planned sections).
 - `pipeline.py`: the steps for one PDF; every finished step is saved, so Resume never pays twice. Each model reply is tidied and checked by `content.py`; only broken items go back to the model (one repair), and what stays broken is left out with a note. GATE answer keys get arithmetic checks and a second-model check.
-- `llm.py`: Claude / OpenAI / Gemini (system prompt cached). `pyq.py`: PYQ sources, verified against the page text.
+- `llm.py`: the OpenAI writer call (system prompt cached; thinking level per run). `pyq.py`: PYQ sources, verified against the page text.
 - `jobs.py`: background workers (topics of a run in parallel, book processing), cancel, resume. `render/`: the PDF renderers (GATE frame, Non-GATE module), figures, the drawing check (`check_content.py`) and the GATE checker.
-- Models and prices live in `config.py` (one model per provider, one line each).
+- Models and prices live in `config.py` (the one writer model and its price).
 
 ## Limits
-Books up to 100 MB / 1,500 pages, 20 topics per run, $5 per run (stops cleanly), 4 PDFs at once (3 per run), 10 PYQ links. Scanned books are not supported (digital text only). Answer checks catch arithmetic slips and the second model catches many wrong keys, but review the notes on each PDF before publishing.
+Books up to 100 MB / 1,500 pages, 20 topics per run, $5 per run (stops cleanly), 4 PDFs at once (3 per run), 10 PYQ links. Scanned books are not supported (digital text only). Answer checks catch arithmetic slips and the optional second check (the same model, asked again to re-solve everything) catches many wrong keys, but review the notes on each PDF before publishing.

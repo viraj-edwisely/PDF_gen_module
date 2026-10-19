@@ -13,8 +13,7 @@ judgement parts are yours.
 6. Self-review checklist
 
 ## 1. The exam the content is calibrated to
-Confirm details against the official information brochure of the target year (the organising IIT
-publishes it); the stable pattern for engineering papers is:
+The stable pattern for engineering papers is:
 
 | Item | GATE pattern |
 |---|---|
@@ -103,9 +102,7 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
 - Every solution shows the working a student should write in 2-4 lines, with the key figure or
   table (`solution_figure`) when it is the fastest route, and for MCQ says why the tempting
   distractor is wrong when that is the point of the question.
-- Solve every numeric answer step by step and give its "check" expression (see the schema): the app
-  recomputes it. PYQ answers are the official key and are never changed; your solution must reach
-  the official answer.
+- PYQ answers are the official key and are never changed; your solution must reach the official answer.
 
 ## 5. Originality (non-plagiarised questions)
 - Practice, sample-paper questions and worked examples are written from scratch: new scenario, new
@@ -121,4 +118,4 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
 - [ ] Each section: rule, method/formula, GATE-style worked example; traps where GATE sets them.
 - [ ] Figures wherever GATE would draw one (see FIGURES), at least one in every section the plan asks for.
 - [ ] Questions are objective, GATE-phrased, within 1.5-4 minutes, mix of MCQ/MSQ/NAT and 1/2 marks.
-- [ ] Every number solved step by step with its "check"; NAT stems state units and rounding; answer ranges set.
+- [ ] Every number has its "check"; NAT stems state units and rounding; answer ranges set.

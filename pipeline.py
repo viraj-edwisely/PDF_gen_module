@@ -8,11 +8,11 @@ Non-GATE: context -> plan -> topics (three per call, at the same time) -> case s
 import functools, json, os, re, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 import content as C, db, llm, pyq, retrieve
-from config import PARALLEL, PROVIDERS, VERIFY_PROVIDER, secret
+from config import DEFAULT_EFFORT, MODEL, PARALLEL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = C.RENDER
-UNCHECKED_NOTE = 'Answer keys were not re-checked by a second model: check them before publishing.'
+UNCHECKED_NOTE = 'Answer keys were not re-checked by a second pass: check them before publishing.'
 REPAIR_TOKENS = 32_000    # a repair rewrites a few items: a longer reply means the model has lost its way
 RETRY = '\n\nYour previous reply could not be used: {problems}\nReturn the complete JSON again, in exactly the format asked for.'
 
@@ -65,9 +65,10 @@ class Job:
     """One run_topic being processed: saved steps, model calls with tidy/check/repair, warnings, progress, cost cap."""
 
     def __init__(self, rt, run):
-        self.rt, self.run, self.provider = rt, run, run['provider']
+        self.rt, self.run = rt, run
         self.system = system_prompt(run['mode'])
         self.feedback = (run['options'] or {}).get('feedback')
+        self.effort = (run['options'] or {}).get('effort') or DEFAULT_EFFORT
 
     def _guard(self):
         """Before each step: stop on cancel, and at the cap (parallel calls charge it, so check before starting another)."""
@@ -90,21 +91,20 @@ class Job:
         rows = db.sql('select output from steps where run_topic_id=%s and name=%s', (self.rt['id'], name))
         return rows[0]['output'] if rows else None
 
-    def charge(self, usage, name, provider=None):
+    def charge(self, usage, name):
         """Add the cost of a model call to the topic, the run and the usage history; stop the run at its cap."""
         if not usage['cost']: return
-        provider = provider or self.provider
         db.event(self.run['created_by'], 'model call', self.run['id'], usage['cost'], topic=self.rt['name'], step=name,
-                 provider=provider, model=PROVIDERS[provider]['model'], input_tokens=usage['in'], output_tokens=usage['out'])
+                 provider='OpenAI', model=MODEL['name'], effort=self.effort, input_tokens=usage['in'], output_tokens=usage['out'])
         db.sql('update run_topics set cost_usd = cost_usd + %s where id=%s', (usage['cost'], self.rt['id']))
         run = db.sql('update runs set cost_usd = cost_usd + %s, heartbeat_at=now() where id=%s returning cost_usd, cost_cap', (usage['cost'], self.run['id']))[0]
         if run['cost_usd'] >= run['cost_cap']: raise CapReached()
 
-    def save(self, name, output, usage, provider=None):
+    def save(self, name, output, usage):
         db.sql('insert into steps (run_topic_id, name, output, input_tokens, output_tokens, cost_usd) values (%s,%s,%s::jsonb,%s,%s,%s) '
                'on conflict (run_topic_id, name) do update set output=excluded.output, input_tokens=excluded.input_tokens, '
                'output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd', (self.rt['id'], name, json.dumps(output), usage['in'], usage['out'], usage['cost']))
-        self.charge(usage, name, provider)
+        self.charge(usage, name)
 
     def step(self, name, fn):
         """A step that makes no model call of its own. Runs once; the output is saved."""
@@ -116,12 +116,12 @@ class Job:
             self.save(name, out, {'in': 0, 'out': 0, 'cost': 0})
         return out
 
-    def _call(self, prompt, usage, provider=None, max_tokens=None):
-        out, u, raw = llm.generate_json(provider or self.provider, self.system, prompt, max_tokens)
+    def _call(self, prompt, usage, max_tokens=None):
+        out, u, raw = llm.generate_json(self.system, prompt, max_tokens, self.effort)
         add(usage, u)
         return out, raw
 
-    def _repair(self, name, out, probs, tidy, usage, provider=None):
+    def _repair(self, name, out, probs, tidy, usage):
         """Send only the problem items back, with their problems, and merge the fixes in. One call."""
         by_path = {}
         for p, m, _ in probs: by_path.setdefault(p, []).append(m)
@@ -130,7 +130,7 @@ class Job:
             except (KeyError, IndexError, TypeError): return None
         items = [{'ref': C.ref(p), 'problems': ms, 'current': current(p)} for p, ms in by_path.items()]
         self.log(f'{name}: sending {len(items)} item(s) back for repair: ' + '; '.join(f"{C.label(p, out)}: {ms[0][:80]}" for p, ms in list(by_path.items())[:3]))
-        try: reply, _ = self._call(fill(read('repair.md'), ITEMS=json.dumps(items, ensure_ascii=False)), usage, provider, REPAIR_TOKENS)
+        try: reply, _ = self._call(fill(read('repair.md'), ITEMS=json.dumps(items, ensure_ascii=False)), usage, REPAIR_TOKENS)
         except Exception as e:          # a failed repair keeps the reply as it was (what is broken is left out later)
             add(usage, getattr(e, 'usage', None)); self.log(f'{name}: the repair call failed: {type(e).__name__}: {e}'); return out
         for f in (reply.get('fixes') if isinstance(reply, dict) else None) or []:
@@ -154,7 +154,7 @@ class Job:
             for p, m, h in probs:
                 if not h: self.warn(f'{C.label(p, out)}: {m[:200]}')
 
-    def ask(self, name, user, tidy=lambda o: o, problems=lambda o: [], provider=None):
+    def ask(self, name, user, tidy=lambda o: o, problems=lambda o: []):
         """One model step: call, tidy, check; a reply that is unusable as a whole is asked for once more; broken items
         go back for one repair; what is still broken is left out. The result is saved, so Resume never pays twice."""
         self._guard()
@@ -164,7 +164,7 @@ class Job:
         usage, out, raw, probs = {'in': 0, 'out': 0, 'cost': 0.0}, None, '', []
         for attempt in range(2):
             try:
-                out, raw = self._call(user if not attempt else user + RETRY.format(problems='; '.join(m for _, m, _ in probs[:4])), usage, provider)
+                out, raw = self._call(user if not attempt else user + RETRY.format(problems='; '.join(m for _, m, _ in probs[:4])), usage)
                 out = tidy(out); probs = problems(out)
             except llm.LLMError as e:
                 add(usage, e.usage)         # a failed call is paid for too
@@ -175,28 +175,28 @@ class Job:
         if out is None or any(not p and h for p, _, h in probs):
             db.sql('insert into steps (run_topic_id, name, output, cost_usd) values (%s,%s,%s::jsonb,%s) on conflict (run_topic_id, name) do update set output=excluded.output',
                    (self.rt['id'], name + '_failed', json.dumps({'raw': raw[:200_000], 'problems': [m for _, m, _ in probs]}), usage['cost']))
-            self.charge(usage, name + '_failed', provider)
+            self.charge(usage, name + '_failed')
             raise llm.LLMError(f'the model could not produce a usable "{name}" part: ' + '; '.join(m for _, m, _ in probs[:2]))
         items = [x for x in probs if x[0]]
         if items:
-            out = self._repair(name, out, items, tidy, usage, provider)
+            out = self._repair(name, out, items, tidy, usage)
             probs = problems(out)
         self._settle(name, out, probs)
-        self.save(name, out, usage, provider)
+        self.save(name, out, usage)
         self.log(f'{name}: done ({usage["in"]} tokens in, {usage["out"]} out, ${usage["cost"]:.3f})')
         return out
 
-    def revise(self, name, obj, probs, tidy, problems, describe=lambda out: None, provider=None):
+    def revise(self, name, obj, probs, tidy, problems, describe=lambda out: None):
         """A saved step that repairs given items of an existing object (used after the second check of the answers).
         describe(repaired) reports the changes before anything broken is left out."""
         self._guard()
         out = self.saved(name)
         if out is not None: return out
         usage = {'in': 0, 'out': 0, 'cost': 0.0}
-        out = self._repair(name, json.loads(json.dumps(obj)), probs, tidy, usage, provider)
+        out = self._repair(name, json.loads(json.dumps(obj)), probs, tidy, usage)
         describe(out)
         self._settle(name, out, [x for x in problems(out) if x[2]], warn_soft=False)
-        self.save(name, out, usage, provider)
+        self.save(name, out, usage)
         return out
 
 
@@ -271,9 +271,8 @@ def figure_brief(f):
 
 
 def verify(job, topic, o, notes, q):
-    """A second model re-solves every question and worked example and reviews whether examples, figures and questions
+    """The writer model, asked again to check, re-solves every question and worked example and reviews whether examples, figures and questions
     teach; the items it disputes or finds weak go back to the writer once."""
-    provider = VERIFY_PROVIDER if secret(PROVIDERS[VERIFY_PROVIDER]['key']) else job.provider
     fields = ('qtype', 'question', 'options', 'answer', 'answer_range', 'solution')
     items = [{'ref': C.ref(('practice', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['practice'])]
     items += [{'ref': C.ref(('sample_paper', 'questions', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['sample_paper']['questions'])]
@@ -289,11 +288,11 @@ def verify(job, topic, o, notes, q):
     keep = lambda out, k: [i for i in C._list(out.get(k) if isinstance(out, dict) else None) if isinstance(i, dict) and isinstance(i.get('ref'), str) and i['ref'] in valid]
     tidy = lambda out: {'issues': keep(out, 'issues'), 'weak': keep(out, 'weak')[:6]}
     try: found = job.ask('verify', fill(read('gate/verify.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], ITEMS=json.dumps(items, ensure_ascii=False)),
-                         tidy=tidy, provider=provider)
+                         tidy=tidy)
     except llm.LLMError as e:       # the second check is optional: without it the PDF is still made, with a warning
         job.warn(f'The second check failed ({str(e)[:150]}). ' + UNCHECKED_NOTE); return notes, q
     issues, weak = found['issues'], found.get('weak', [])
-    job.log(f'Second check ({provider}): {len(issues)} of {len(items)} items disputed, {len(weak)} found weak')
+    job.log(f'Second check: {len(issues)} of {len(items)} items disputed, {len(weak)} found weak')
     if not issues and not weak: return notes, q
     obj = {'notes': notes, **q}
     probs = [(C.unref(i['ref']), f"a second check found a mistake: {str(i.get('problem', ''))[:300]}" + (f" (it gets: {i['correct']})" if i.get('correct') else ''), False) for i in issues]

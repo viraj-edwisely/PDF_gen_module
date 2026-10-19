@@ -38,8 +38,8 @@ c1, c2 = st.columns([3, 1])
 c1.subheader('Cost per day')
 c1.bar_chart(ev.assign(day=ev.time.dt.date).pivot_table(index='day', columns='email', values='cost', aggfunc='sum', fill_value=0), y_label='USD', x_label='')
 calls = ev[ev.action == 'model call']
-c2.subheader('By writer')
-c2.dataframe(calls.groupby(calls.detail.map(lambda d: (d or {}).get('provider', '?'))).cost.sum().rename('Cost').rename_axis('Writer').sort_values(ascending=False),
+c2.subheader('By model')
+c2.dataframe(calls.groupby(calls.detail.map(lambda d: (d or {}).get('model', '?'))).cost.sum().rename('Cost').rename_axis('Model').sort_values(ascending=False),
              column_config={'Cost': st.column_config.NumberColumn(format='$%.2f')})
 
 st.subheader('Activity')

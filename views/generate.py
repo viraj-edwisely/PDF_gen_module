@@ -2,9 +2,11 @@
 import io, json, time
 import pandas as pd
 import streamlit as st
-import db, jobs, llm, pyq
-from config import COST_CAP, MAX_TOPICS, MAX_URLS, PROVIDERS, SCOPE_TOKEN_BUDGET, TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, VERIFY_PROVIDER, cost, secret
+import db, jobs, pyq
+from config import COST_CAP, DEFAULT_EFFORT, EFFORTS, MAX_TOPICS, MAX_URLS, MODEL, SCOPE_TOKEN_BUDGET, TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, cost
 from ui import user
+
+EFFORT_OUTPUT = {'low': 0.6, 'medium': 1.0, 'high': 1.8}      # rough share of the medium-level output (reasoning tokens are billed as output)
 
 st.title('Generate PDFs')
 
@@ -13,11 +15,8 @@ st.subheader('1 · What to make')
 c1, c2 = st.columns([3, 2])
 mode = 'gate' if c1.radio('Type of PDF', ['GATE', 'Non-GATE'], horizontal=True,
                           help='GATE: one Edwisely GATE topic guide per topic, with exam-style questions. Non-GATE: one learning module covering all topics.') == 'GATE' else 'nongate'
-ready = [p for p, c in PROVIDERS.items() if secret(c['key'])]
-provider = c2.selectbox('Writer', ready, format_func=lambda p: f"{p} ({PROVIDERS[p]['model']})", help='The AI model that writes the content.')
-if c2.button('Check that this writer works', help='Sends one tiny request (costs a fraction of a cent) to confirm the key and the model name.'):
-    with st.spinner('Asking the writer...'): err = llm.ping(provider)
-    (c2.error(err) if err else c2.success('The writer answered.'))
+effort = c2.select_slider('Thinking level', EFFORTS, value=DEFAULT_EFFORT,
+                          help=f"How long {MODEL['name']} reasons before writing. Higher is usually more careful, slower and costs more; low is the cheapest and fastest.")
 
 # 2. source
 st.subheader('2 · Source')
@@ -103,15 +102,15 @@ if mode == 'gate':
     options['paper'] = c1.text_input('GATE paper code', key='paper', placeholder='CS').strip().upper()
     options['subject'] = c2.text_input('Subject', key='subject', placeholder='e.g. Computer Organization and Architecture').strip()
     options['syllabus_line'] = st.text_input('Syllabus line (optional; the writer writes one if empty)').strip()
-    has_verifier = bool(secret(PROVIDERS[VERIFY_PROVIDER]['key']))
     options['verify'] = st.toggle('Second check: answers and teaching quality', value=False,
-                                  help=f"{VERIFY_PROVIDER if has_verifier else provider} re-solves every question and worked example, and flags examples, figures and "
+                                  help="The writer re-solves every question and worked example, and flags examples, figures and "
                                        "questions that do not teach (one-line examples, decorative or mismatched figures, recall questions). Those go back to "
                                        "the writer once, with a note for you. Adds about $0.10-0.20 per PDF.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()
     c1, c2 = st.columns(2)
     options['study_time'], options['audience'] = c1.text_input('Study time (optional)').strip(), c2.text_input('Recommended for (optional)').strip()
+options['effort'] = effort
 options['prompt'] = st.text_area('User prompt (optional)', height=100, placeholder='e.g. Focus on numerical problems on effective address calculation; use the notation of Hamacher.',
                                  help='Extra instructions sent to the writer with every step. GATE: the GATE format stays the same. '
                                       'Non-GATE: overrides the standard module template where they conflict.').strip()
@@ -122,10 +121,9 @@ scope_tokens = db.sql('select coalesce(sum(length(text)), 0) / 4 n from pages wh
 n = max(1, len(topics))
 context = scope_tokens if scope_tokens <= SCOPE_TOKEN_BUDGET else TOPIC_TOKEN_BUDGET
 calls, out_tokens = (4, 40_000) if mode == 'gate' else (2 + -(-n // 3), 9_000 * n + 12_000)    # GATE: plan, 2 notes, questions; Non-GATE: plan, topics in threes, end matter
-estimate = 1.15 * cost(provider, calls * (context + 15_000), out_tokens) * (n if mode == 'gate' else 1)     # +15% for repairs
+estimate = 1.15 * cost(calls * (context + 15_000), out_tokens * EFFORT_OUTPUT[effort]) * (n if mode == 'gate' else 1)     # +15% for repairs
 if mode == 'gate' and options.get('verify'):
-    estimate += n * (cost(VERIFY_PROVIDER if secret(PROVIDERS[VERIFY_PROVIDER]['key']) else provider, 25_000, 4_000)    # the review
-                     + cost(provider, 30_000, 10_000))                                                                  # fixing what it found
+    estimate += n * (cost(25_000, 4_000) + cost(30_000, 10_000))      # the review, and fixing what it found
 minutes = (-(-n // TOPIC_PARALLEL) * 10) if mode == 'gate' else 12
 
 errors = []
@@ -141,10 +139,10 @@ if not options['subject']: errors.append('Enter the subject.')
 with st.container(border=True):
     what = f"{len(topics)} GATE PDF{'s' if len(topics) != 1 else ''}" if mode == 'gate' else f"1 learning module with {len(topics)} topic{'s' if len(topics) != 1 else ''}"
     src = (book['title'] + (f', pages {start}-{end}' if start else '')) if book else "no book (the writer's own knowledge)"
-    st.markdown(f"**{what}** · writer {provider} · source: {src}{' · with your prompt' if options['prompt'] else ''}\n\n"
+    st.markdown(f"**{what}** · {MODEL['name']}, {effort} thinking · source: {src}{' · with your prompt' if options['prompt'] else ''}\n\n"
                 f"Estimated cost **about ${estimate:.2f}**, time **about {minutes} minutes**. A run stops by itself at ${COST_CAP:.0f}; finished PDFs are kept.")
     if errors: st.info('Still needed: ' + ' '.join(errors))
-    same = json.dumps([mode, provider, book and book['id'], start, end, options, sorted(sources)], sort_keys=True, default=str)
+    same = json.dumps([mode, book and book['id'], start, end, options, sorted(sources)], sort_keys=True, default=str)
     last = st.session_state.get('last_run')                   # (settings, time, run id): a double click must not start the run twice
     if st.button('Generate', type='primary', disabled=bool(errors)):
         if last and last[0] == same and time.time() - last[1] < 120:
@@ -152,7 +150,7 @@ with st.container(border=True):
         try: options['pyq'] = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
                                for t, (kind, got) in sources.items()}
         except Exception as e: st.error(f'A PYQ file could not be read: {e}. Save it again as a digital PDF or .docx and retry.'); st.stop()
-        run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), provider, options, user())
+        run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), options, user())
         st.session_state.last_run = (same, time.time(), run_id)
         st.success(f'Run #{run_id} started.')
         st.page_link('views/runs.py', label='Open the Runs page to follow it', icon='📄')

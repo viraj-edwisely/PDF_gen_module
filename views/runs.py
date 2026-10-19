@@ -58,7 +58,7 @@ def build_zip(run, topics):
             c = json.loads(fetch(t['json_path']))
             name = f"{t['position'] + 1:02d}_" + (re.sub(r'[^\w]+', '_', t['name']).strip('_')[:80] or 'topic') + '.pdf'   # numbered: no two topics share a name
             z.writestr(name, fetch(t['pdf_path']))
-            ws.append([t['name'], name, run['mode'], f"{run['provider']} ({run['model']})", t['status'], float(t['cost_usd']), len(c.get('pyqs', [])), len(c.get('practice', [])),
+            ws.append([t['name'], name, run['mode'], run['model'], t['status'], float(t['cost_usd']), len(c.get('pyqs', [])), len(c.get('practice', [])),
                        len((c.get('sample_paper') or {}).get('questions', [])), count(c, ('example', 'worked_example')), count(c, ('figure',)), '; '.join(t['warnings'])])
         index = io.BytesIO(); wb.save(index); z.writestr('INDEX.xlsx', index.getvalue())
     return buf.getvalue()
@@ -91,7 +91,7 @@ def topic_card(run, t):
             if st.button('Regenerate', key=f"rg{t['id']}", disabled=not feedback):
                 options = dict(run['options'], feedback=feedback)
                 if run['mode'] == 'gate': options['topics'] = [t['name']]
-                new = jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), run['provider'], options, user())
+                new = jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), options, user())
                 st.success(f'Started run #{new}. Refresh the list to open it.')
             fixed = st.file_uploader('Or upload a corrected JSON (download it above, edit it, upload it here): re-renders without the model', type='json', key=f"up{t['id']}")
             if fixed and st.button('Re-render from this JSON', key=f"rr{t['id']}"):
@@ -110,7 +110,7 @@ def show(run_id, was_active):
     o = run['options'] or {}
     st.subheader(f"#{run['id']} · {title(run)}")
     scope = f" · pages {run['scope_start']}-{run['scope_end']}" if run['scope_start'] else ''
-    st.caption(f"{'GATE' if run['mode'] == 'gate' else 'Non-GATE'} · {o.get('subject', '')} · writer {run['provider']} ({run['model']}) · "
+    st.caption(f"{'GATE' if run['mode'] == 'gate' else 'Non-GATE'} · {o.get('subject', '')} · writer {run['model']}, thinking {o.get('effort', 'medium')} · "
                f"started by {run['created_by']} on {run['created_at']:%d %b %Y, %H:%M} UTC" + (' · book used' + scope if run['book_id'] else ' · no book'))
     ready, bad = sum(t['pdf_path'] is not None for t in topics), sum(t['status'] == 'failed' for t in topics)
     c1, c2, c3 = st.columns(3)
@@ -157,7 +157,7 @@ shown = [r for r in runs
 if not shown: st.info('No run matches these filters.'); st.stop()
 
 table = pd.DataFrame([{'Run': f"#{r['id']}", 'Topics': title(r), 'Type': 'GATE' if r['mode'] == 'gate' else 'Non-GATE', 'Status': RUN_STATUS.get(status(r), status(r)),
-                       'PDFs': f"{r['ready']} of {r['n']} ready" + (f" · {r['bad']} failed" if r['bad'] else ''), 'Writer': r['provider'],
+                       'PDFs': f"{r['ready']} of {r['n']} ready" + (f" · {r['bad']} failed" if r['bad'] else ''), 'Writer': r['model'],
                        'By': (r['created_by'] or '').split('@')[0], 'Started': r['created_at'].strftime('%d %b %H:%M'), 'Cost': f"${float(r['cost_usd']):.2f}"} for r in shown])
 event = st.dataframe(table, hide_index=True, width='stretch', height=min(38 * len(shown) + 38, 290), on_select='rerun', selection_mode='single-row', key='runs_table')
 rows = event.selection.rows if event and event.selection else []

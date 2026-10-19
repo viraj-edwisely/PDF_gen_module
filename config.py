@@ -1,16 +1,12 @@
-"""Settings: providers, prices, limits and secrets. The only file to edit to change a model or a limit."""
+"""Settings: model, prices, limits and secrets. The only file to edit to change a model or a limit."""
 import os
 
-# One model per provider: Claude Sonnet is the reference, OpenAI (GPT-6 Luna) and Gemini are the cheaper models. price = (USD per 1M input tokens, USD per 1M output tokens).
-PROVIDERS = {
-    'Claude': {'model': 'claude-sonnet-5-5', 'key': 'ANTHROPIC_API_KEY', 'price': (2.0, 10.0), 'cached': 0.05, 'max_out': 64_000, 'concurrent': 6},
-    'OpenAI': {'model': 'gpt-6-luna', 'key': 'OPENAI_API_KEY', 'price': (0.10, 0.50), 'cached': 0.1, 'max_out': 128_000, 'concurrent': 6},
-    'Gemini': {'model': 'gemini-3-flash-preview', 'key': 'GOOGLE_SERVICE_ACCOUNT_JSON', 'price': (0.50, 3.0), 'cached': 0.1, 'max_out': 65_536, 'concurrent': 4},  # Vertex AI
-}
-# price: USD per 1M input / output tokens (list prices checked 2026-10-16; reasoning/thinking tokens are billed as output);
-# cached: price of a cache read as a share of the input price (Claude cache writes cost 1.25x);
-# max_out: the model's output limit (only the tokens actually written are paid for); concurrent: calls in flight at once
-# per provider across all runs, so parallel topics do not trip its rate limit
+# The one writer model. price = (USD per 1M input tokens, USD per 1M output tokens; reasoning tokens are billed as output);
+# cached: price of a cache read as a share of the input price; max_out: the model's output limit (only the tokens written are paid for);
+# concurrent: calls in flight at once across all runs, so parallel topics do not trip the rate limit.
+# Thinking level: the user picks one per run; higher levels reason longer (better, slower, dearer).
+MODEL = {'name': 'gpt-6-luna', 'price': (0.10, 0.50), 'cached': 0.1, 'max_out': 128_000, 'concurrent': 6}
+EFFORTS, DEFAULT_EFFORT = ('low', 'medium', 'high'), 'medium'
 RETRIES = 6               # retries of a rate-limited (429), overloaded or failed (5xx, timeout) call, with growing waits
 EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # price per 1M tokens
 
@@ -22,7 +18,6 @@ MAX_BOOK_MB, MAX_PAGES = 100, 1500
 WORKERS = 4               # PDFs (and book uploads) processed at the same time, across all runs
 TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time
 PARALLEL = 4              # model calls running at the same time inside one PDF
-VERIFY_PROVIDER = 'Claude'    # the second model that re-checks GATE answer keys (falls back to the run's writer without its key)
 SCOPE_TOKEN_BUDGET = 16_000   # scope text up to this size is sent whole, in page order (it goes into 4 calls, so larger scopes are searched)
 TOPIC_TOKEN_BUDGET = 8_000    # retrieval budget per call for larger scopes (GATE notes and questions search their own sections)
 STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted
@@ -38,6 +33,6 @@ def secret(name):
         return None
 
 
-def cost(provider, tokens_in, tokens_out):
-    p_in, p_out = PROVIDERS[provider]['price']
+def cost(tokens_in, tokens_out):
+    p_in, p_out = MODEL['price']
     return (tokens_in * p_in + tokens_out * p_out) / 1e6

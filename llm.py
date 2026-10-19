@@ -1,17 +1,15 @@
-"""One call for all providers: generate_json(provider, system, user) -> (object, usage, raw text).
+"""One call to the writer model: generate_json(system, user) -> (object, usage, raw text).
 
-Providers are asked for a single JSON object; we tidy and check it ourselves (content.py and the pipeline's repair loop),
-because the providers' schema dialects do not fit our content JSON. Rate limits (429), overload and 5xx errors are
-retried by the SDKs (RETRIES times, with growing waits that honour Retry-After), and at most `concurrent` calls per
-provider are in flight at once. The system prompt is the same for every call of a run, so it is sent first and cached
-where the provider supports it.
+The model is asked for a single JSON object; we tidy and check it ourselves (content.py and the pipeline's repair loop),
+because the API's schema dialect does not fit our content JSON. Rate limits (429), overload and 5xx errors are
+retried by the SDK (RETRIES times, with growing waits that honour Retry-After), and at most `concurrent` calls are in
+flight at once. The system prompt is the same for every call of a run, so it is sent first and cached automatically.
 """
 import functools, importlib, json, re, threading
-from config import PROVIDERS, RETRIES, cost, secret
+from config import DEFAULT_EFFORT, MODEL, RETRIES, cost, secret
 
-SLOTS = {p: threading.BoundedSemaphore(c['concurrent']) for p, c in PROVIDERS.items()}
+SLOT = threading.BoundedSemaphore(MODEL['concurrent'])
 CUT_OFF = '{} reply was cut off at its length limit: write the same items more concisely (shorter explanations)'
-GEMINI_LOCK = threading.Lock()      # functools.cache is not atomic: parallel first calls would each make a client
 
 
 class LLMError(Exception):
@@ -27,30 +25,11 @@ def _guess(system, user, text):
     return n, len(text) // 4, n
 
 
-def _claude(model, system, user, max_tokens):
-    import anthropic
-    with anthropic.Anthropic(api_key=secret('ANTHROPIC_API_KEY'), max_retries=RETRIES).messages.stream(
-            model=model, max_tokens=max_tokens, system=[{'type': 'text', 'text': system, 'cache_control': {'type': 'ephemeral'}}],
-            messages=[{'role': 'user', 'content': user}], output_config={'effort': 'medium'}) as stream:
-        sofar = ''
-        for t in stream.text_stream:
-            sofar += t
-            if stuck(sofar): raise LLMError(STUCK.format('Claude'), sofar, _guess(system, user, sofar))
-        msg = stream.get_final_message()
-    text = ''.join(b.text for b in msg.content if b.type == 'text')
-    u = msg.usage; read, write = u.cache_read_input_tokens or 0, u.cache_creation_input_tokens or 0
-    usage = (u.input_tokens + read + write, u.output_tokens, u.input_tokens + PROVIDERS['Claude']['cached'] * read + 1.25 * write)
-    why = {'max_tokens': CUT_OFF.format('Claude'), 'refusal': 'Claude declined to answer',
-           'model_context_window_exceeded': 'Claude reply was cut off: the request and reply filled its context window'}.get(msg.stop_reason)
-    if why: raise LLMError(why, text, usage)
-    return (text,) + usage
-
-
-def _openai(model, system, user, max_tokens):
+def _openai(system, user, max_tokens, effort):
     from openai import OpenAI
     text, usage, finish = '', (0, 0, 0), None
     for ev in OpenAI(api_key=secret('OPENAI_API_KEY'), max_retries=RETRIES).chat.completions.create(
-            model=model, max_completion_tokens=max_tokens, reasoning_effort='medium', stream=True, stream_options={'include_usage': True},     # reasoning tokens count towards the limit and the price
+            model=MODEL['name'], max_completion_tokens=max_tokens, reasoning_effort=effort, stream=True, stream_options={'include_usage': True},     # reasoning tokens count towards the limit and the price
             response_format={'type': 'json_object'}, messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]):
         if ev.choices:
             text += ev.choices[0].delta.content or ''
@@ -58,49 +37,10 @@ def _openai(model, system, user, max_tokens):
             finish = ev.choices[0].finish_reason or finish
         if ev.usage:
             cached = getattr(ev.usage.prompt_tokens_details, 'cached_tokens', 0) or 0
-            usage = (ev.usage.prompt_tokens, ev.usage.completion_tokens, ev.usage.prompt_tokens - (1 - PROVIDERS['OpenAI']['cached']) * cached)    # automatic prompt caching
+            usage = (ev.usage.prompt_tokens, ev.usage.completion_tokens, ev.usage.prompt_tokens - (1 - MODEL['cached']) * cached)    # automatic prompt caching
     if finish == 'length': raise LLMError(CUT_OFF.format('OpenAI'), text, usage)      # checked after the loop: the usage comes last
     if finish == 'content_filter': raise LLMError('OpenAI withheld the reply (content filter)', text, usage)
     return (text,) + usage
-
-
-@functools.cache
-def _gemini_client():
-    """Gemini through Vertex AI, signed in with the service-account JSON (no API key). Made once and kept:
-    the library closes its connection when a client is garbage-collected, which breaks a stream still being read."""
-    from google import genai
-    from google.oauth2 import service_account
-    info = secret('GOOGLE_SERVICE_ACCOUNT_JSON')
-    # pasted as a JSON string or as a TOML table; strict=False because TOML """...""" turns the key's \n into real line breaks
-    info = json.loads(info, strict=False) if isinstance(info, str) else dict(info)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=['https://www.googleapis.com/auth/cloud-platform'])
-    args = dict(project=info['project_id'], location=secret('GOOGLE_CLOUD_LOCATION') or 'global', credentials=creds,
-                http_options=genai.types.HttpOptions(retry_options=genai.types.HttpRetryOptions(attempts=RETRIES + 1)))   # retries 408, 429, 5xx
-    try: return genai.Client(enterprise=True, **args)      # google-genai 2.x
-    except TypeError: return genai.Client(vertexai=True, **args)    # google-genai 1.x
-
-
-def _gemini(model, system, user, max_tokens):
-    from google import genai
-    text, usage, finish, blocked = '', (0, 0, 0), '', ''
-    cfg = genai.types.GenerateContentConfig(system_instruction=system, response_mime_type='application/json', max_output_tokens=max_tokens,
-                                          thinking_config=genai.types.ThinkingConfig(thinking_level='medium'))     # Gemini 3: thinking counts towards the output limit and the price
-    with GEMINI_LOCK: client = _gemini_client()      # a local reference keeps the client alive while its stream is read
-    for ch in client.models.generate_content_stream(model=model, contents=user, config=cfg):
-        text += ch.text or ''
-        if stuck(text): raise LLMError(STUCK.format('Gemini'), text, _guess(system, user, text))
-        if ch.candidates and ch.candidates[0].finish_reason: finish = str(ch.candidates[0].finish_reason).rsplit('.', 1)[-1]
-        if ch.prompt_feedback and ch.prompt_feedback.block_reason: blocked = str(ch.prompt_feedback.block_reason).rsplit('.', 1)[-1]
-        if ch.usage_metadata:
-            m = ch.usage_metadata; cached = m.cached_content_token_count or 0
-            usage = (m.prompt_token_count or 0, (m.candidates_token_count or 0) + (m.thoughts_token_count or 0), (m.prompt_token_count or 0) - (1 - PROVIDERS['Gemini']['cached']) * cached)
-    if finish == 'MAX_TOKENS': raise LLMError(CUT_OFF.format('Gemini'), text, usage)
-    if blocked or finish in ('SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII'):
-        raise LLMError(f'Gemini blocked the reply ({blocked or finish})', text, usage)
-    return (text,) + usage
-
-
-CALLS = {'Claude': _claude, 'OpenAI': _openai, 'Gemini': _gemini}
 
 
 # LaTeX commands that start with a letter JSON reads as an escape: "\frac" written with one backslash would silently
@@ -152,40 +92,30 @@ STUCK = '{} reply got stuck repeating the same characters; write each item once,
 
 @functools.cache
 def _transient():
-    """Errors worth another try: a dropped connection, or an API error of whichever provider SDKs are installed (also one sent mid-stream)."""
+    """Errors worth another try: a dropped connection, or an OpenAI API error (also one sent mid-stream)."""
     kinds = []
-    for mod, name in (('anthropic', 'APIError'), ('openai', 'APIError'), ('google.genai.errors', 'APIError'), ('httpx', 'TransportError')):
+    for mod, name in (('openai', 'APIError'), ('httpx', 'TransportError')):
         try: kinds.append(getattr(importlib.import_module(mod), name))
         except ImportError: pass
     return tuple(kinds)
 
 
-def generate_json(provider, system, user, max_tokens=None):
-    """Returns (parsed object, {'in': tokens, 'out': tokens, 'cost': USD}, raw text). Waits for a free slot of the provider.
+def generate_json(system, user, max_tokens=None, effort=DEFAULT_EFFORT):
+    """Returns (parsed object, {'in': tokens, 'out': tokens, 'cost': USD}, raw text). Waits for a free slot.
     A call that fails on a transient error is made up to twice more; every failure is raised as an LLMError with its usage."""
-    bill = lambda t_in, t_out, billed_in: {'in': t_in, 'out': t_out, 'cost': cost(provider, billed_in, t_out)}
+    bill = lambda t_in, t_out, billed_in: {'in': t_in, 'out': t_out, 'cost': cost(billed_in, t_out)}
     for attempt in range(3):
         try:
-            with SLOTS[provider]:
-                text, *u = CALLS[provider](PROVIDERS[provider]['model'], system, user, max_tokens or PROVIDERS[provider]['max_out'])
+            with SLOT: text, *u = _openai(system, user, max_tokens or MODEL['max_out'], effort)
             break
         except LLMError as e:
             if e.usage: e.usage = bill(*e.usage)
             raise
         except _transient() as e:
-            if attempt == 2: raise LLMError(f'{provider} call failed: {type(e).__name__}: {e}') from e
+            if attempt == 2: raise LLMError(f'OpenAI call failed: {type(e).__name__}: {e}') from e
     usage = bill(*u)
     try: return parse_json(text), usage, text
     except LLMError as e: e.usage = usage; raise
-
-
-def ping(provider):
-    """A tiny call that proves the key and the model ID work. Returns None or the error text."""
-    try:
-        out, _, _ = generate_json(provider, 'Reply with JSON only.', 'Return {"ok": true}', max_tokens=2000)
-        return None if out.get('ok') else f'unexpected reply: {out}'
-    except Exception as e:
-        return f'{type(e).__name__}: {e}'[:400]
 
 
 def embed(texts):

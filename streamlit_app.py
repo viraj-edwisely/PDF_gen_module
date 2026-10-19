@@ -1,14 +1,14 @@
 """Edwisely PDF builder: entry point. Checks the secrets, creates the tables, starts the background workers, shows the pages."""
 import streamlit as st
 import db, jobs, ui
-from config import PROVIDERS, secret
+from config import secret
 
 st.set_page_config(page_title='Edwisely PDF Builder', page_icon='📘', layout='wide')
 
-REQUIRED = ('DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_KEY', 'OPENAI_API_KEY')   # OpenAI is always needed for book search
+REQUIRED = ('DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_KEY', 'OPENAI_API_KEY')   # the writer and the book search both use OpenAI
 missing = [k for k in REQUIRED if not secret(k)]
-if missing or not any(secret(p['key']) for p in PROVIDERS.values()):
-    st.error('Setup is incomplete. Add these in the app secrets (see README.md): ' + ', '.join(missing + ([] if any(secret(p['key']) for p in PROVIDERS.values()) else ['at least one of ' + ', '.join(p['key'] for p in PROVIDERS.values())])))
+if missing:
+    st.error('Setup is incomplete. Add these in the app secrets (see README.md): ' + ', '.join(missing))
     st.stop()
 
 

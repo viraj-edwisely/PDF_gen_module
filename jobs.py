@@ -1,7 +1,7 @@
 """Background workers: create, cancel and resume runs; process queued topics and uploaded books."""
 import contextlib, json, threading, time
 import db, ingest, pipeline
-from config import COST_CAP, PROVIDERS, STALE_SECONDS, TOPIC_PARALLEL, WORKERS
+from config import COST_CAP, MODEL, STALE_SECONDS, TOPIC_PARALLEL, WORKERS
 
 # next queued topic; at most TOPIC_PARALLEL topics of one run are processed at the same time
 CLAIM = """update run_topics set status='running', step='Starting' where id = (
@@ -20,16 +20,16 @@ FINISH = """update runs set status = case
               and not exists (select 1 from run_topics where run_id=%(id)s and status in ('queued', 'running'))"""
 
 
-def create_run(mode, book_id, scope, provider, options, user):
+def create_run(mode, book_id, scope, options, user):
     """One run_topic per topic for GATE; a single module for Non-GATE. Returns the run id."""
     topics = options['topics']
     names = topics if mode == 'gate' else [f"{options['subject']} module: " + ', '.join(topics[:3]) + ('...' if len(topics) > 3 else '')]
     title = ', '.join(topics[:3]) + (f' +{len(topics) - 3} more' if len(topics) > 3 else '')
     run = db.sql('insert into runs (mode, title, book_id, scope_start, scope_end, provider, model, options, cost_cap, created_by) values (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) returning id',
-                 (mode, title, book_id, scope[0], scope[1], provider, PROVIDERS[provider]['model'], json.dumps(options), COST_CAP, user))[0]['id']
+                 (mode, title, book_id, scope[0], scope[1], 'OpenAI', MODEL['name'], json.dumps(options), COST_CAP, user))[0]['id']
     db.many('insert into run_topics (run_id, name, position) values (%s,%s,%s)', [(run, n, i) for i, n in enumerate(names)])
-    pipeline.log(run, None, f'Run created by {user}: {len(names)} PDF(s), writer {provider} ({PROVIDERS[provider]["model"]})')
-    db.event(user, 'run started', run, title=title, type='GATE' if mode == 'gate' else 'Non-GATE', pdfs=len(names), writer=provider, book=bool(book_id))
+    pipeline.log(run, None, f'Run created by {user}: {len(names)} PDF(s), writer {MODEL["name"]}, thinking {options.get("effort")}')
+    db.event(user, 'run started', run, title=title, type='GATE' if mode == 'gate' else 'Non-GATE', pdfs=len(names), writer=MODEL['name'], thinking=options.get('effort'), book=bool(book_id))
     return run
 
 
