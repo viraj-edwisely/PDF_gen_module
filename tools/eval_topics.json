@@ -1,9 +1,0 @@
-[
-  {"paper": "CS", "subject": "Operating System", "topics": ["CPU scheduling algorithms", "Page replacement algorithms"]},
-  {"paper": "CS", "subject": "Computer Organization and Architecture", "topics": ["Cache memory mapping"]},
-  {"paper": "EC", "subject": "Signals and Systems", "topics": ["Fourier transform"]},
-  {"paper": "EC", "subject": "Analog Circuits", "topics": ["Operational amplifier circuits"]},
-  {"paper": "ME", "subject": "Mechanics of Materials", "topics": ["Torsion of solid and hollow circular shafts"]},
-  {"paper": "CE", "subject": "Structural Analysis", "topics": ["Shear force and bending moment diagrams"]},
-  {"paper": "CS", "subject": "Engineering Mathematics", "topics": ["Eigenvalues and eigenvectors"]}
-]
