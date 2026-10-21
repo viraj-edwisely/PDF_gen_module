@@ -16,9 +16,9 @@ A bare string in a blocks list is a `para`.
 | `para` | text | paragraph |
 | `subhead` | text | bold run-in heading ("Order P1, P2, P3:", "(a) Non-pre-emptive") |
 | `bullets` / `numbered` | items: [string, ...] | list |
-| `formula` | latex (no $) | centred display maths, one equation |
+| `formula` | latex (no $), key (bool), where: [[symbol, meaning, unit], ...] | display maths. `key: true` frames it as one of the 1-3 formulas of the section to remember. `where` lists the symbols it introduces, one row each, shown under it (a symbol already explained earlier in the section is left out by the app, so list every new one) |
 | `table` | header: [string, ...], rows: [[string, ...], ...], total_row (bool, optional: last row bold) | purple-header table |
-| `example` | title, problem, solution, check | worked-example box. problem and solution are each a string (a blank line starts a new paragraph) or a list of BLOCKs (tables, figures, formulas inside) |
+| `example` | title, problem, given, find, steps, answer, rushed, check | worked-example box (see WORKED EXAMPLES below) |
 | `trap` | text, title (optional, default "Common GATE trap") | box: a mistake GATE questions are built to catch |
 | `note` | text, title (optional), blocks (optional) | box for GATE habits and conventions |
 | `callout` | text | purple box: the one rule to remember |
@@ -27,6 +27,22 @@ A bare string in a blocks list is a `para`.
 
 The example "title" is the topic of the example only ("Relative branch target"), without the words "Worked example".
 There are no image blocks: every picture is a `figure` the app draws.
+Do not write a Symbol / Meaning / Unit table: put the symbols in the formula's `where`.
+
+## WORKED EXAMPLES
+{"type": "example", "title": "Moving, heated closed system",
+ "problem": "A closed 20 kg body ... Find the change in internal energy.",      (a string, or a list of BLOCKs with its figure)
+ "given": [["m", "20 kg"], ["V_1", "5 m/s"], ["Q", "+50 kJ"]],                   (symbol and value with unit; optional for conceptual examples)
+ "find": "$\Delta U$",
+ "steps": [{"say": "Kinetic-energy change", "latex": "\Delta KE = \frac{1}{2}(20)(15^2 - 5^2) = 2000\ \mathrm{J}", "result": "2.000 kJ"},
+           {"say": "Energy balance", "latex": "\Delta U = Q - W - \Delta KE - \Delta PE", "text": "optional short sentence", "result": "35.61 kJ"}],
+ "answer": "ΔU = 35.61 kJ",
+ "rushed": "Using only Q − W gives 38 kJ: it puts the energy that went into speed and height into internal energy.",
+ "check": {"expr": "50 - 12 - 0.5*20*(15**2-5**2)/1000 - 20*9.81*2/1000", "answer": "35.61"}}
+- One step per line of working a student writes: "say" names what the step finds (a few words), "latex" is the working
+  as one display line (no $), "result" its value with unit. A step may hold "blocks" (a table or the figure it needs).
+- 3 to 6 steps for a numerical example; never one paragraph of working.
+- "rushed": the answer a hurried student reaches and why it is wrong, in one or two sentences (leave it out if there is none).
 
 ## "check": how the app verifies numbers
 Write the check from the values given in the problem or question (never from rounded intermediate values), with exact constants (2*pi*N/60, not 9550). Every value it uses must be stated in the problem or question text.
@@ -41,10 +57,12 @@ Leave "check" out for questions whose answer is not a number.
 ## QUESTION fields
 `question`, `qtype` (MCQ/MSQ/NAT), `marks` (1 or 2), `options` (exactly 4 strings, without "(A)" prefixes; omit for NAT),
 `answer` (letter(s) "B" / "A, C", or the number for NAT), `answer_range` (NAT, e.g. "7.19 to 7.21"),
-`solution` (string or BLOCK list, shown in the answer key), `check` (see above), `level` (practice only: Easy/Medium/Hard),
+`steps` (the solution in the answer key, 2 to 4 steps as in WORKED EXAMPLES; a short string `solution` only for a one-line
+conceptual answer), `check` (see above), `level` (practice only: Easy/Medium/Hard),
 `figure` (a figure object {kind, spec, width} drawn under the question; the question then says "shown in the figure"),
 `solution_figure` (a figure object shown in the answer key), `mirrors` (internal: the GATE archetype it is calibrated to; never printed).
 PYQs only: `source` like CS-GATE-2019.
 
 ## Text markup
 `**bold**`, `*italic*`, inline maths `$...$` (see MATHS), a blank line starts a new paragraph, `\$` is a literal dollar.
+Units are plain text with their characters: m³, kg/m³, m/s², N·m, kN·m, °C, Ω, µF (never m$^3$ or m^3).

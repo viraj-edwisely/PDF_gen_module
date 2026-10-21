@@ -5,7 +5,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from config import secret
 
-BUCKETS = ('books', 'outputs')
+BUCKETS = ('books', 'outputs', 'illustrations')
 
 
 def _dsn():

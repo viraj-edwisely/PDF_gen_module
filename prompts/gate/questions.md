@@ -5,6 +5,7 @@ User's instructions (follow them within the GATE format and the JSON below; "(no
 
 GATE question archetypes for this topic: {{ARCHETYPES}}
 Concepts covered in the notes (headings): {{HEADINGS}}
+Notation of the notes (use exactly these symbols, units and conventions): {{NOTATION}}
 Previous-year questions already in the PDF (do NOT reuse or lightly change them):
 {{PYQS}}
 
@@ -12,8 +13,7 @@ Return this JSON:
 {
   "practice": [ QUESTION, ... ],
   "sample_paper": {"title": "Sample paper (timed)", "duration": "12 min", "questions": [ QUESTION, ... ]},
-  "traps": [ "**bold lead-in:** explanation", ... ],
-  "revision_card": [ "one-line key point", ... ]
+  "traps": [ "**bold lead-in:** explanation", ... ]
 }
 (QUESTION fields: see the schema.)
 
@@ -22,14 +22,15 @@ PRACTICE: 10 to 12 questions, ordered Easy, then Medium, then Hard. Easy = GATE 
 SAMPLE PAPER: 5 questions totalling 8 marks (for example 2 x 1-mark and 3 x 2-mark): a GATE-like mix of MCQ, MSQ and NAT. Every sample question must be DIFFERENT from every practice question. No "source" and no "level" field.
 
 TRAPS: 5 to 10 one-line mistakes GATE questions are built to catch.
-REVISION CARD: 5 to 8 one-line key points: formulas and decision rules to recall in the exam.
 
 For every question
 - GATE phrasing: MCQ "Which one of the following is CORRECT?"; MSQ "Which of the following statements is/are CORRECT?"; NAT ends with "______", states units and rounding ("rounded off to two decimal places") and has an "answer_range" wide enough to accept the usual approximations (for example 9550 for 60000/2pi, or pi = 3.14).
 - Exactly one defensible answer: state every assumption a careful student needs (word size, signed or unsigned, units, which convention).
 - Every value the solution uses is stated in the question text with its unit (material constants such as G or E, lengths, allowed limits, diameters of each segment). A figure only illustrates: never leave data to the figure alone.
 - MCQ distractors come from real mistakes (wrong convention, forgotten factor, missed idle time). Exactly four options, no "all/none of the above". Answers are letters ("B", "A, C").
-- A "solution" of 2 to 4 lines of working that reaches the answer, saying why the tempting distractor is wrong when that is the point.
+- "steps": the solution as 2 to 4 numbered steps (WORKED EXAMPLES format: "say", one "latex" line of working, "result") that
+  reach the answer; the last step's "text" says why the tempting distractor is wrong when that is the point. A purely
+  conceptual question may use a one- or two-sentence "solution" instead.
 - A "check" for every NAT question and for every MCQ whose correct option is a number (see the schema).
 - Together the practice questions cover every archetype listed above; no two practice questions are the same problem with new numbers.
 - An internal "mirrors" field naming the archetype it is calibrated to. Add a "figure" where GATE would show a diagram.

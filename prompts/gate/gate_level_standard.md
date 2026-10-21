@@ -40,16 +40,18 @@ has asked). List the **question archetypes** GATE has used for this topic (e.g. 
 partial UDL", "eigenvalues of a triangular matrix"). The notes must equip the student for every
 archetype, plus the obvious neighbours GATE has not yet asked.
 
-Per GATE-testable idea, one numbered section with:
-1. **Rule / definition** in one or two sentences, then when it applies (pre-emptive or not, valid only for a
-   linear elastic material...), written as plain sentences without labels such as "Type:".
-2. **The formula or method as GATE uses it**, with symbols defined and units.
-3. **Why it works / when it fails**, only as far as it changes an answer (optimality, limiting cases,
-   assumptions GATE questions quietly rely on).
-4. **One worked example in GATE style** (a 2-mark-size problem, numbers that a calculator handles in
-   2-4 minutes), solved step by step with the intermediate table/figure a topper would draw.
-5. **A trap box** where GATE has set a trap before (sign/convention, tie-breaking, units, idle time,
-   boundary cases).
+The notes build the concept up in order, the way a good teacher would at the board: what it is and why it
+matters, how it works or is built, how it is analysed, its variants and limits, and how GATE tests it. Every
+subtopic of the syllabus line (and every subtopic the user lists) gets its own section. Per section:
+1. **Intuition first**: one or two plain sentences a student could repeat aloud, then the rule and when it applies.
+2. **The key formula or method as GATE uses it**, framed (`key`), with every new symbol and its unit in `where`.
+3. **Why it works / when it fails**, only as far as it changes an answer (limiting cases, hidden assumptions).
+4. **One worked example in GATE style** (a 2-mark-size problem, 2-4 minutes on a calculator), solved in numbered
+   steps with the intermediate values, the figure a topper would draw, and the rushed answer that is wrong.
+5. **A trap box** where GATE has set a trap before (sign/convention, tie-breaking, units, boundary cases).
+
+Write simply: short sentences (about 25 words at most), at most three sentences per paragraph, bullets for lists of
+conditions, no restating, and about 250-400 words of prose per section (examples, formulas and tables not counted).
 
 Topic-level additions: "What you will learn" (3-5 verb-first outcomes), prerequisites by name, a
 **comparison section** when the topic has several methods ("one problem, every method"), a **Common
@@ -60,8 +62,9 @@ Depth guardrails:
   examples that are plug-in with one step; no figures for a visual/numerical topic.
 - Too deep (cut): research-level proofs, topics outside the official syllabus line, exotic variants
   never asked in GATE (if a variant is genuinely examinable, keep it to a short paragraph).
-- Typical size: 4-12 sections, one worked example per section, a figure in most sections, 10-18 pages per topic.
-  Small topics (e.g. a single aptitude idea) can be shorter but still need ≥ 3 worked examples.
+- Size follows the topic: as many sections as its subtopics need (usually 4-12), one worked example per section,
+  a figure in most sections, up to about 25 pages. A small topic gets a short PDF; never pad it. Extra pages go to
+  figures, worked examples and coverage, never to longer prose. Small topics still need ≥ 3 worked examples.
 
 ## 3. Questions: types, phrasing, difficulty
 
@@ -99,7 +102,7 @@ the syllabus line. Before writing practice, re-read 3-4 PYQs of the topic to anc
 ## 4. Answer key conventions
 - MCQ/MSQ: letters ("B", "A, C"). NAT: the value plus `answer_range` (exact for integers; otherwise wide enough
   to accept the usual approximations, such as 9550 for 60000/2π or π = 3.14, and the rounding of intermediate values).
-- Every solution shows the working a student should write in 2-4 lines, with the key figure or
+- Every solution shows the working a student should write as 2-4 numbered steps (`steps`), with the key figure or
   table (`solution_figure`) when it is the fastest route, and for MCQ says why the tempting
   distractor is wrong when that is the point of the question.
 - PYQ answers are the official key and are never changed; your solution must reach the official answer.

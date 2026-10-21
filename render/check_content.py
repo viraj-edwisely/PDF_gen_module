@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Try to draw every figure and every piece of maths in a content JSON, exactly as the renderers will.
-Prints the failures as JSON: [{"path": [...], "what": "figure" | "maths", "error": "..."}].
+Prints the failures as JSON: [{"path": [...], "what": "figure" | "maths" | "layout", "error": "..."}]
+(layout: the figure draws, but labels still overlap).
 
 Usage: python check_content.py content.json     (run as a subprocess: matplotlib must not be shared between threads)"""
 import json, sys
@@ -18,9 +19,12 @@ def brief(e):
 def walk(x, path=(), key=None):
     if isinstance(x, dict):
         if x.get('type') == 'code': return                  # code is shown as typed: $ is not maths there
-        if 'kind' in x and 'spec' in x:
-            try: figures.render(x['kind'], x['spec'])
+        if 'kind' in x and 'spec' in x and not (x['kind'] == 'illustration' and not (x['spec'] or {}).get('file')):    # illustrations come from the library later
+            try: n = figures.overlaps(figures.render(x['kind'], x['spec']))
             except Exception as e: yield {'path': list(path), 'what': 'figure', 'error': brief(e)[:240]}
+            else:
+                if n: yield {'path': list(path), 'what': 'layout', 'error': f'{n} label(s) in this figure still overlap other labels or '
+                             'run off the plot: shorten the labels, label fewer points, or spread them out'}
         for k, v in x.items():
             if k not in ('kind', 'spec'): yield from walk(v, path + (k,), k)
     elif isinstance(x, list):

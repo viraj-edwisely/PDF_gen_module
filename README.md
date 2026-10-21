@@ -5,7 +5,8 @@ A Streamlit app that turns a textbook PDF plus a topic list into branded study P
 - **GATE**: one Edwisely GATE topic guide per topic (concept notes, worked examples, figures, traps, revision card, previous-year questions, practice, sample paper, answer key).
 - **Non-GATE**: one learning-module PDF (topics, case study, practice, model answers, revision sheet), shaped by an optional user prompt.
 
-Pages: **Generate** (start a run), **Runs** (progress, warnings, previews, downloads), **Library** (upload books, review units), **Usage** (cost, PDFs and activity per person; admins see everyone, others their own), **Admin** (admins only: people, passwords, roles).
+Pages: **Generate** (start a run), **Runs** (progress, warnings, previews, downloads, the quality report of each PDF, reviewer feedback), **Library** (upload books, review units), **Illustrations** (approve or reject pictures of machines and apparatus before any PDF uses them), **Usage** (cost, PDFs and activity per person; admins see everyone, others their own), **Admin** (admins only: people, passwords, roles).
+Quality plan and the reasons behind the design: `../GATE_QUALITY_PLAN.md` (evidence from SME reviews: `../SME_FEEDBACK_PLAN.md`).
 Plan and design decisions: `../PLAN.md`.
 
 ## One-time setup (you do these)
@@ -40,15 +41,29 @@ pip install -r requirements.txt
 # graphviz must be installed for graph/automaton/tree figures (https://graphviz.org/download/)
 # put the secrets in .streamlit/secrets.toml
 streamlit run streamlit_app.py
-python -m pytest tests        # offline checks of the content rules and the renderers (pip install pytest)
+python -m pytest tests        # offline checks: content rules, renderers, figures against textbook values, the whole GATE pipeline with a scripted model (pip install pytest)
 python tests/stress_pdf.py stress.pdf    # after a renderer change: every formula style and figure kind in one PDF, to look at
 ```
+
+## Measuring quality
+- Every GATE PDF gets a **quality report** (Runs page): pages, subtopics covered, prose per section, worked examples with
+  steps, figures (and how many are computed from physics), raw maths left on a page, mostly empty pages, notes to review.
+- Reviewers add **feedback** on each PDF (kind of problem, page, comment); "All reviewer feedback" on the Runs page lists and
+  exports it. Each new kind of problem becomes a test in `tests/` and, where possible, a new automatic check.
+- **Golden set**: `python tools/eval.py start` makes one run per topic of `tools/eval_topics.json` (12 topics across papers),
+  `python tools/eval.py score NAME` scores them (quality report, the app's checks, and a judge rubric with the SME criteria),
+  `python tools/eval.py compare A B` shows what changed. A prompt change ships only if no criterion gets worse.
+- Options on the Generate page: **Visual review of figures and pages** (the model looks at every drawn figure and page; wrong
+  figures go back to the writer once) and **Draw new illustrations** (GPT Image, once per concept, approved on the
+  Illustrations page before use; the model ID and price are in `config.py`: confirm the price before switching it on).
 
 ## How it works (short)
 - `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model (a scope up to 16k tokens is sent whole; a larger one is searched, and each GATE notes call searches its own planned sections).
 - `pipeline.py`: the steps for one PDF; every finished step is saved, so Resume never pays twice. Each model reply is tidied and checked by `content.py`; only broken items go back to the model (one repair), and what stays broken is left out with a note. GATE answer keys get arithmetic checks and a second-model check.
 - `llm.py`: the OpenAI writer call (system prompt cached; thinking level per run). `pyq.py`: PYQ sources, verified against the page text.
 - `jobs.py`: background workers (topics of a run in parallel, book processing), cancel, resume. `render/`: the PDF renderers (GATE frame, Non-GATE module), figures, the drawing check (`check_content.py`) and the GATE checker.
+- Figures (`render/`): `figures.py` (plot with stacked panels, bars, graph, cells, gantt, circuit, and the registry of kinds), `fig_geometry.py` (drawings with true proportions), `fig_diagrams.py` (block diagrams, logic circuits, K-maps, timing diagrams, Mermaid, illustrations), `fig_physics.py` (computed from physics: beam with SFD/BMD, Mohr's circle, pressure on plates, modulation waveforms and spectra, thermodynamic cycles with CoolProp, control responses), `labels.py` (labels placed clear of each other and of the drawing). Each kind's spec is its docstring, given to the model as is.
+- `review.py`: the visual review and the illustration library. `quality.py`: the quality report.
 - Models and prices live in `config.py` (the one writer model and its price).
 
 ## Limits

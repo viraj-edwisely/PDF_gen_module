@@ -14,14 +14,15 @@ import difflib, json, math, os, re, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 RENDER = os.path.join(HERE, 'render')
 sys.path.insert(0, RENDER)
-from check_gate_level import check as gate_check   # noqa: E402  (pure Python)
+from check_gate_level import check as gate_check, key_formulas   # noqa: E402  (pure Python)
 from safe_eval import safe_eval                     # noqa: E402  (numpy only)
 from tex import normalize as tex_normalize      # noqa: E402  (pure Python)
 from llm import loads                               # noqa: E402  (json.loads that keeps LaTeX backslashes)
 
 GATE_BLOCKS = {'para', 'subhead', 'bullets', 'numbered', 'formula', 'table', 'example', 'trap', 'note', 'callout', 'code', 'figure', 'spacer', 'pagebreak'}
 NONGATE_BLOCKS = {'situation', 'concept', 'worked_example', 'pitfall', 'note', 'quick_check', 'para', 'table', 'bullets', 'numbered', 'formula', 'figure', 'subhead'}
-FIGURE_KINDS = {'gantt', 'timeline', 'plot', 'bars', 'graph', 'cells', 'beam', 'circuit'}
+FIGURE_KINDS = {'gantt', 'timeline', 'plot', 'bars', 'graph', 'cells', 'circuit', 'geometry', 'block', 'logic', 'mermaid',
+                'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'illustration'}
 FIELD = {'para': 'text', 'subhead': 'text', 'bullets': 'items', 'numbered': 'items', 'formula': 'latex', 'code': 'text', 'callout': 'text',
          'trap': 'text', 'situation': 'text', 'concept': 'text', 'pitfall': 'text', 'worked_example': 'text', 'quick_check': 'items'}
 ALIASES = {'text': ('content', 'body', 'value', 'paragraph', 'description', 'statement', 'code'), 'items': ('list', 'points', 'bullets', 'steps', 'entries', 'questions'),
@@ -87,6 +88,17 @@ def ref(path): return '/'.join(map(str, path))
 def unref(s): return tuple(int(x) if x.isdigit() else x for x in str(s).strip('/').split('/'))
 
 
+def split_topic(text, subtopics=''):
+    """A topic as typed, as (title, subtopics). Subtopics come from their own field (comma or semicolon separated) or, when
+    that is empty, from a bracketed list at the end of the topic: "Buoyancy (Buoyant force, Metacentre, ...)" -> title
+    "Buoyancy" and the list. A bracket without a list ("Kirchhoff's laws (KCL)") stays part of the title."""
+    parts = lambda s: [x.strip() for x in re.split(r'[;,\n]', s) if x.strip()]
+    text = ' '.join(str(text or '').split())
+    m = re.fullmatch(r'(.+?)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)', text)
+    if not subtopics and m and len(parts(m.group(2))) >= 2: return m.group(1).strip(), parts(m.group(2))
+    return text, parts(subtopics or '')
+
+
 # ---------------------------------------------------------------- tidy: fix predictable slips in code
 def clean(x):
     """NUL characters out (the database refuses them); 'GATE 2027'-style target years out of printed text; escapes such as
@@ -139,6 +151,65 @@ def _text(x):
     return '' if x is None else str(x)
 
 
+STEP_KEYS = {'say': ('label', 'title', 'what', 'step', 'heading', 'find'), 'latex': ('formula', 'math', 'work', 'working', 'equation', 'expr'),
+             'text': ('explanation', 'note', 'description', 'content'), 'result': ('value', 'answer', 'gives')}
+TEX_ENDS = re.compile(r'^\s*(\$\$?|\\\[)|(\$\$?|\\\])\s*$')
+
+
+def _steps(x, mode='gate'):
+    """Solution steps from whatever the model wrote: a list of {say, latex, text, result, blocks} (fields under other names,
+    strings, "1. ..." lines), or a solution string, which becomes one step per paragraph or numbered line."""
+    if isinstance(x, str):
+        x = [p for p in re.split(r'\n\s*\n|\n(?=\s*(?:\d+[.)]|Step\s*\d+)\s)', x) if p.strip()]
+    out = []
+    for st in _list(x):
+        if isinstance(st, str): st = {'text': re.sub(r'^\s*(?:\d+[.)]|Step\s*\d+[:.]?)\s*', '', st)}
+        if not isinstance(st, dict): continue
+        st = dict(st)
+        for k, alts in STEP_KEYS.items():
+            if st.get(k) in (None, ''):
+                for a in alts:
+                    if st.get(a) not in (None, ''): st[k] = st.pop(a); break
+            if k in st: st[k] = _text(st[k])
+        if st.get('latex'): st['latex'] = TEX_ENDS.sub('', st['latex'])
+        if isinstance(st.get('blocks'), list): st['blocks'] = blocks(st['blocks'], mode)
+        if any(st.get(k) for k in ('say', 'latex', 'text', 'result', 'blocks')): out.append(st)
+    return out
+
+
+def _where(x):
+    """Formula symbols as [symbol, meaning, unit] rows, from rows, {symbol: meaning} dicts, row dicts or "ρ = density (kg/m³)" strings."""
+    if isinstance(x, dict) and not any(k in x for k in ('symbol', 'sym')): x = [[k, v] for k, v in x.items()]
+    rows = []
+    for r in _list(x):
+        if isinstance(r, dict): r = [_text(r.get('symbol') or r.get('sym')), _text(r.get('meaning') or r.get('description') or r.get('name')), _text(r.get('unit') or r.get('units') or '')]
+        elif isinstance(r, str):
+            m = re.match(r'\s*(.+?)\s*(?:=|:|–|—|\bis\b)\s*(.+)', r)
+            if not m: continue
+            u = re.search(r'\(([^()]*)\)\s*$|,\s*in\s+(.+)$', m.group(2))
+            r = [m.group(1), m.group(2)[:u.start()].strip() if u else m.group(2), (u.group(1) or u.group(2)) if u else '']
+        elif isinstance(r, (list, tuple)): r = [_text(c) for c in r][:3]
+        else: continue
+        if r and r[0]: rows.append(r)
+    return rows
+
+
+SYMBOL_TABLE = re.compile(r'^\s*(symbol|notation|term|quantity)s?\s*$', re.I)
+
+
+def symbol_tables_to_where(bs):
+    """A Symbol / Meaning / Unit table right after a formula becomes that formula's "where" list (the model's own symbol
+    tables doubled the length of a section and repeated symbols)."""
+    out = []
+    for b in bs:
+        if isinstance(b, dict) and b.get('type') == 'table' and b.get('header') and SYMBOL_TABLE.match(str(b['header'][0])) and \
+                out and isinstance(out[-1], dict) and out[-1].get('type') == 'formula':
+            out[-1] = dict(out[-1], where=(out[-1].get('where') or []) + _where(b.get('rows')))
+            continue
+        out.append(b)
+    return out
+
+
 def block(b, mode):
     """One content block, tidied. Returns None for blocks that cannot be shown (images: the app draws all figures itself)."""
     if isinstance(b, str) and b.strip().startswith('{'):          # a block the model wrote as a string of JSON
@@ -158,7 +229,11 @@ def block(b, mode):
     if t in ('bullets', 'numbered'):
         b['items'] = [_text(x) for x in _list(b.get('items'))]
     if t == 'formula':
-        b['latex'] = re.sub(r'^\s*(\$\$?|\\\[)|(\$\$?|\\\])\s*$', '', _text(b.get('latex')))
+        b['latex'] = TEX_ENDS.sub('', _text(b.get('latex')))
+        w = _first(b, 'where', 'symbols', 'variables', 'definitions', 'legend')
+        for k in ('symbols', 'variables', 'definitions', 'legend'): b.pop(k, None)
+        if w: b['where'] = _where(w)
+        if 'key' in b: b['key'] = b['key'] in (True, 'true', 'yes', 1)
     if t == 'table':
         _alias(_alias(b, 'header'), 'rows')
         rows, head = _list(b.get('rows')), _list(b.get('header'))
@@ -169,17 +244,27 @@ def block(b, mode):
             rows = [[r.get(k, '') for k in keys] if isinstance(r, dict) else r for r in rows]
         b['header'], b['rows'] = head, [[_text(c) for c in r] if isinstance(r, list) else [_text(r)] for r in rows]
     if t == 'example':
-        _alias(_alias(b, 'problem'), 'solution')
+        _alias(b, 'problem')
+        sol = b.get('solution')
+        if isinstance(sol, dict):                   # the structured solution written inside "solution"
+            b.update({k: v for k, v in sol.items() if k in ('given', 'find', 'steps', 'answer', 'rushed') and not b.get(k)}); b.pop('solution')
+        if not b.get('steps') and not b.get('solution'): _alias(b, 'solution')
         for k in ('problem', 'solution'):
             if isinstance(b.get(k), list): b[k] = [x for x in (block(v, mode) for v in b[k]) if x]
             elif b.get(k) is not None and not isinstance(b[k], str): b[k] = _text(b[k])
+        if b.get('steps'): b['steps'] = _steps(b['steps'], mode)
+        elif isinstance(b.get('solution'), str) and b['solution'].strip(): b['steps'] = _steps(b.pop('solution'), mode)    # old style: a paragraph per step
+        b['given'] = [g if isinstance(g, (list, tuple)) else _text(g) for g in _list(b.get('given'))]
+        for k in ('find', 'answer', 'rushed'):
+            if b.get(k) is not None: b[k] = _text(b[k])
     if t == 'worked_example' and (isinstance(b.get('problem'), list) or isinstance(b.get('solution'), list)):
         sol = blocks(b.pop('solution', None), mode)
         b['blocks'] = blocks(b.pop('problem', None), mode) + ([{'type': 'para', 'text': '**Solution.**'}] + sol if sol else []) + _list(b.get('blocks'))
         b['text'] = b.get('text') or '**Problem.**'
     if t == 'worked_example' and not b.get('text') and (b.get('problem') or b.get('solution')):
         b['text'] = _text(b.pop('problem', '')) + ('\n\n**Solution.** ' + _text(b.pop('solution')) if b.get('solution') else '')
-    if t != 'example': b.pop('problem', None); b.pop('solution', None)          # only examples have them (never drawn elsewhere)
+    if t != 'example':
+        for k in ('problem', 'solution', 'steps', 'given', 'find', 'rushed'): b.pop(k, None)     # only examples have them (never drawn elsewhere)
     if t == 'quick_check':
         b['items'] = [{'q': _text(x.get('q') or x.get('question')), 'a': _text(x.get('a') or x.get('answer'))} for x in _list(b.get('items')) if isinstance(x, dict)]
     if t == 'figure':
@@ -196,7 +281,7 @@ def block(b, mode):
 
 
 def blocks(bs, mode):
-    return [x for x in (block(b, mode) for b in _list(bs)) if x]
+    return symbol_tables_to_where([x for x in (block(b, mode) for b in _list(bs)) if x])
 
 
 def answer_range(ans):
@@ -264,6 +349,9 @@ def question(q, mode='gate'):
         if re.fullmatch(r'(?i)\s*\(?[A-D]\)?\.?(\s*(,|and|&|;|\s)\s*\(?[A-D]\)?\.?)*\s*', key): letters = re.findall(r'(?<![A-Za-z])[A-Da-d](?![A-Za-z])', key)
         else: letters = re.findall(r'^\(?([A-Da-d])[).:]', key)        # "B) 24 ms": the letter in front
         if letters: q['answer'] = ', '.join(sorted(set(x.upper() for x in letters)))
+    if isinstance(q.get('solution'), list) and not any(isinstance(x, dict) and x.get('type') for x in q['solution']):
+        q['steps'] = q.pop('solution')                 # steps written under "solution"
+    if q.get('steps'): q['steps'] = _steps(q['steps'], mode)
     if isinstance(q.get('solution'), list): q['solution'] = blocks(q['solution'], mode)
     for k in ('image', 'solution_image'): q.pop(k, None)
     for k in ('figure', 'solution_figure'):
@@ -284,6 +372,12 @@ def gate_plan(p):
     for s in p['sections']:
         s['heading'] = _text(_first(s, 'heading', 'title', 'name') or '')
         s['figure'] = _text(s.get('figure') or '')
+        for k in ('builds_on', 'no_figure_reason'): s[k] = _text(s.get(k) or '')
+    p['storyline'] = _text(p.get('storyline'))
+    p['coverage'] = [{'subtopic': _text(_first(c, 'subtopic', 'item', 'topic')), 'section': _text(_first(c, 'section', 'heading'))}
+                     for c in _list(p.get('coverage')) if isinstance(c, dict)]
+    p['notation'] = [{k: _text(_first(n, k, *alts) or '') for k, alts in (('symbol', ('sym',)), ('meaning', ('name', 'description')), ('unit', ('units',)),
+                                                                          ('convention', ('sign', 'note')))} for n in _list(p.get('notation')) if isinstance(n, dict)]
     for k in ('subtitle', 'syllabus_line'): p[k] = _text(p.get(k))
     p['objectives'] = [_text(x) for x in _list(p.get('objectives'))]
     p['prerequisites'] = [_text(x) for x in _list(p.get('prerequisites'))]
@@ -332,6 +426,58 @@ def gate_questions(out):
     sp['marks'] = sum(q.get('marks', 0) for q in sp['questions'] if isinstance(q.get('marks'), int))
     sp['title'] = _text(sp.get('title')) or 'Sample paper (timed)'; sp['duration'] = _text(sp.get('duration')) or f"{round(sp['marks'] * 1.5)} min"
     return {'practice': practice, 'sample_paper': sp, 'traps': _lines(out.get('traps')), 'revision_card': _lines(_first(out, 'revision_card', 'revision'))}
+
+
+def notes_digest(notes):
+    """The notes as the revision step sees them: per section its heading, key formulas, callouts and traps (first sentences)."""
+    first = lambda t: re.split(r'(?<=[.!?])\s', _text(t), 1)[0][:220]
+    out = []
+    for n in notes:
+        bl = list(walk_blocks(n.get('blocks', [])))
+        out.append({'heading': n.get('heading', ''), 'key_formulas': key_formulas(n),
+                    'rules': [first(b.get('text')) for b in bl if b.get('type') == 'callout'][:2],
+                    'traps': [first(b.get('text')) for b in bl if b.get('type') == 'trap'][:2]})
+    return out
+
+
+def gate_revision(out, notes):
+    """The revision page: one row per notes section (in order, under the notes' own headings) and the flow between them."""
+    out = clean(out if isinstance(out, dict) else {})
+    rows = [r for r in _list(_first(out, 'rows', 'revision', 'sections')) if isinstance(r, dict)]
+    heads = [n.get('heading', '') for n in notes]
+    tidy = [{k: TEX_ENDS.sub('', _text(_first(r, k, *alts) or '')) if k == 'formula' else _text(_first(r, k, *alts) or '')
+             for k, alts in (('section', ('heading', 'title')), ('idea', ('summary', 'point')), ('formula', ('latex', 'key_formula')),
+                             ('rule', ('remember', 'decision_rule')), ('trap', ('mistake', 'pitfall')))} for r in rows]
+    if len(tidy) == len(heads):
+        for r, h in zip(tidy, heads): r['section'] = h
+    return {'rows': tidy, 'flow': [_text(x) for x in _list(out.get('flow')) if x][:8]}
+
+
+def gate_revision_problems(out, notes):
+    if len(out['rows']) != len(notes) or not all(r['idea'] for r in out['rows']):
+        return [((), f'"rows" must have one entry per section ({len(notes)}), each with an "idea"', True)]
+    return [(item_path(p), m, h) for p, m, h in math_problems(out, ())]
+
+
+def revision_from_notes(notes):
+    """A revision page without a model call (the fallback when the revision step fails): headings, key formulas, traps."""
+    return {'rows': [{'section': d['heading'], 'idea': d['heading'], 'formula': (d['key_formulas'] or [''])[0],
+                      'rule': (d['rules'] or [''])[0], 'trap': (d['traps'] or [''])[0]} for d in notes_digest(notes)], 'flow': []}
+
+
+def retidy(c):
+    """A finished GATE content JSON brought to the current structure (paragraph solutions become steps, symbol tables
+    become "where" lists, the title loses its bracketed subtopics), for re-rendering an older PDF without the model."""
+    c = dict(c)
+    c['topic_name'], subs = split_topic(c.get('topic_name', ''), ', '.join(c.get('subtopics') or []))
+    c['subtopics'] = subs
+    c.update(gate_notes(c))
+    levels = [q.get('level') for q in c.get('practice', [])]
+    q = gate_questions(c)
+    for x, lvl in zip(q['practice'], levels): x['level'] = lvl or x['level']
+    c.update(practice=q['practice'], sample_paper={**(c.get('sample_paper') or {}), **q['sample_paper']})
+    c['pyqs'] = [question(x) for x in c.get('pyqs') or [] if isinstance(x, dict)]
+    return c
 
 
 def pyq_questions(out):
@@ -481,22 +627,37 @@ def drawing_problems(obj):
     except subprocess.TimeoutExpired: return []
     if r.returncode: return []          # the checker itself failed: the renderer's own fallbacks still apply
     return [(item_path(f['path']), ('this figure cannot be drawn: ' if f['what'] == 'figure' else '') + f['error'], f['what'] == 'figure')
-            for f in json.loads(r.stdout)]
+            for f in json.loads(r.stdout)]          # maths that does not draw is shown as text, and overlapping labels are soft: both kept
 
 
 def walk_blocks(bs):
+    """Every block, at any depth: inside boxes, example problems and solutions, and the blocks of solution steps."""
     for b in bs or []:
         if isinstance(b, dict):
             yield b
             for k in ('problem', 'solution', 'blocks'):
                 if isinstance(b.get(k), list): yield from walk_blocks(b[k])
+            for st in b.get('steps') or []:
+                if isinstance(st, dict) and isinstance(st.get('blocks'), list): yield from walk_blocks(st['blocks'])
 
 
-def gate_plan_problems(p):
+def _key(t): return re.sub(r'[^a-z0-9]+', ' ', str(t).lower()).strip()
+
+
+def gate_plan_problems(p, subtopics=()):
+    """A usable plan, every subtopic the user listed taught by a section, and a figure or a reason for each section."""
     s = p.get('sections')
-    if not (isinstance(s, list) and 3 <= len(s) <= 12 and all(x.get('heading') for x in s) and p.get('objectives')):
-        return [((), 'need 3 to 12 "sections", each with a "heading", and "objectives"', True)]
-    return []
+    if not (isinstance(s, list) and 3 <= len(s) <= 16 and all(x.get('heading') for x in s) and p.get('objectives')):
+        return [((), 'need 3 to 16 "sections", each with a "heading", and "objectives"', True)]
+    heads = {_key(x['heading']) for x in s}
+    covered = {_key(c['subtopic']) for c in p.get('coverage', []) if _key(c['section']) in heads}
+    words = lambda t: set(_key(t).split())
+    missing = [t for t in subtopics if _key(t) not in covered and not any(words(t) <= words(c) or words(t) <= words(h) for c in covered for h in heads)]
+    probs = [(('coverage',), 'these subtopics are not taught by any section: ' + '; '.join(missing) +
+              '. Add a section for each (or name the section that teaches it), and list them in "coverage"', False)] if missing else []
+    probs += [(('sections', i), f'section "{x["heading"]}" has no figure and no "no_figure_reason": plan the standard figure for it, or say why none helps', False)
+              for i, x in enumerate(s) if not x.get('figure') and not x.get('no_figure_reason')]
+    return probs
 
 
 def _numbers(x):
@@ -540,15 +701,43 @@ def figure_problems(f, path, example_text=None):
 
 
 def example_problems(b, path):
-    """A numerical worked example (it has a "check") that is only a plug-in: almost no working shown. Conceptual examples
-    reason in words and are not counted."""
-    figs, rest = _figures_and_text([b.get('problem'), b.get('solution')])
+    """A numerical worked example (it has a "check") that is only a plug-in or whose working is a paragraph instead of
+    steps. Conceptual examples reason in words and are not counted."""
+    figs, rest = _figures_and_text([b.get('problem'), b.get('solution')] + [s.get('blocks') for s in b.get('steps') or [] if isinstance(s, dict)])
     sol = b.get('solution')
+    worked = [s for s in b.get('steps') or [] if isinstance(s, dict) and (s.get('latex') or s.get('result'))]
     formulas = sum(1 for x in (sol if isinstance(sol, list) else []) if isinstance(x, dict) and x.get('type') in ('formula', 'table'))
-    if b.get('check') and formulas < 2 and json.dumps(sol, ensure_ascii=False).count('=') < 3:
-        out = [(path, 'the worked example shows almost no working: make it a GATE 2-mark problem solved in 3 or more steps with the intermediate values', False)]
-    else: out = []
+    out = []
+    if b.get('check') and len(worked) < 3 and formulas < 2 and json.dumps([sol, b.get('steps')], ensure_ascii=False).count('=') < 3:
+        out.append((path, 'the worked example shows almost no working: make it a GATE 2-mark problem solved in 3 or more "steps" with the intermediate values', False))
+    elif b.get('check') and not worked and formulas < 2:          # working written as paragraphs
+        out.append((path, 'write the solution as "steps" (each with "say", one "latex" line of working and its "result"), not as paragraphs', False))
     return out + [p for f in figs for p in figure_problems(f, path, rest)]
+
+
+META = re.compile(r'\b(schematic(ally)?|not (drawn )?to scale|drawn (at|as|in|with) |for (visual )?clarity|purely illustrative|for illustration)\b', re.I)
+
+
+def writing_problems(note, path, earlier=()):
+    """Plain, short writing (SME feedback: long, complicated paragraphs): paragraphs over about 80 words, sections far over
+    their word budget, sentences about how a figure is drawn, and key formulas repeated from an earlier section."""
+    out, prose = [], 0
+    for j, b in enumerate(note.get('blocks', [])):
+        if not isinstance(b, dict): continue
+        texts = [b.get('text', '')] if b.get('type') in ('para', 'note', 'callout', 'trap') else []
+        texts += [b.get('caption', '')] if b.get('type') == 'figure' else []
+        for t in texts:
+            words = len(re.sub(r'\$[^$]*\$', 'x', str(t)).split())
+            prose += words if b.get('type') == 'para' else 0
+            if b.get('type') == 'para' and words > 85:
+                out.append((path + ('blocks', j), f'this paragraph has {words} words: split it into short paragraphs (at most three sentences each) or bullets', False))
+            if META.search(str(t)):
+                out.append((path + ('blocks', j), 'remove the sentence about how the figure is drawn ("' + META.search(str(t)).group(0) + '"): the figure must show the idea itself', False))
+        if b.get('type') == 'formula' and b.get('latex') and _key(b['latex']) in earlier:
+            out.append((path + ('blocks', j), 'this formula repeats one from an earlier section: refer to it in words instead of teaching it again', False))
+    if prose > 550:
+        out.append((path, f'the section has about {prose} words of prose: cut it to about 400 (say each thing once; bullets for conditions)', False))
+    return out
 
 
 def gate_notes_problems(out, sections):
@@ -569,6 +758,8 @@ def gate_notes_problems(out, sections):
         for j, b in enumerate(n['blocks']):          # examples with their figures; figures outside examples on their own
             if b.get('type') == 'example': probs += example_problems(b, ('notes', i, 'blocks', j))
             elif b.get('type') == 'figure': probs += figure_problems(b, ('notes', i, 'blocks', j))
+        earlier = {_key(b['latex']) for m in notes[:i] for b in m['blocks'] if isinstance(b, dict) and b.get('type') == 'formula' and b.get('key') and b.get('latex')}
+        probs += [(item_path(p), m, h) for p, m, h in writing_problems(n, ('notes', i), earlier)]
     return probs + drawing_problems(out)
 
 
@@ -610,7 +801,6 @@ def gate_questions_problems(out, paper):
     for i, q in enumerate(pr): probs += question_checks(q, ('practice', i))
     for i, q in enumerate(sp['questions']): probs += question_checks(q, ('sample_paper', 'questions', i))
     if not out['traps']: probs.append((('traps',), 'write 5 to 10 traps', False))
-    if not out['revision_card']: probs.append((('revision_card',), 'write 5 to 8 revision-card lines', False))
     probs += [(item_path(p), m, h) for p, m, h in math_problems({k: out[k] for k in ('practice', 'sample_paper', 'traps', 'revision_card')}, ())]
     return probs + drawing_problems(out)
 

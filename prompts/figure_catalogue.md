@@ -1,27 +1,71 @@
 # Figures
 
-Draw a figure wherever a GATE paper would show one, or a topper would sketch one while solving. Every computational
-worked example of a visual topic gets its figure (Gantt chart, trace, tree, graph, circuit, beam, plot...).
-The app draws figures from a JSON spec in the Edwisely palette:
+The app draws every figure from a JSON spec in the Edwisely style, places the labels so they never overlap, and checks
+that it draws. A figure that cannot be drawn, or whose labels still collide, is sent back to you.
 
-{"type": "figure", "kind": "gantt", "spec": {...}, "title": "SRTF (optional)", "caption": "optional", "width": 0.8}
+{"type": "figure", "kind": "beam", "spec": {...}, "title": "SFD and BMD (optional)", "caption": "what to read off it", "width": 0.9}
 
-- "kind" is one of: gantt (or timeline), plot, bars, graph, cells, beam, circuit. Nothing else exists, and there are no image files.
-- "spec" follows EXACTLY the spec of its kind below: the field names, the list shapes ([label, start, end]), and the value types. A figure whose spec is wrong cannot be drawn and is sent back to you.
-- "width" is a fraction of the available width (Gantt charts default to the full width).
+- "kind" is one of the kinds in the reference below. "spec" follows that kind's spec EXACTLY: field names, list shapes, value types.
 - In a question: "figure": {"kind": ..., "spec": ...}; in the answer key: "solution_figure": {...}.
-- Labels match the text exactly (P1, A-B, q0, R1); units on axes; key values annotated. One idea per figure; keep labels short (under about 20 characters per node or cell).
-- Labels are plain text: write Greek letters and subscripts as characters (ω, π, θ, x₀, T₁), or put maths inside $...$ ("$X(j\omega)$"). Never write \omega or \frac without $...$.
-- A curve that follows a formula (exponential, sinc, sine, parabola) is an "expr" with a "range", never a short list of points: points are joined by straight lines. Point lists are for straight-line shapes (pulses, triangles) and measured data.
-- Annotations sit inside the plot area (their "xytext" within the axis limits); the legend sits above the plot.
-- Pick the kind by what the figure shows. graph is only for nodes joined by edges (trees, state machines, networks, block diagrams); it is never a way to draw a signal, a spectrum or a shape. Signals, spectra and impulse trains are plot figures (impulses: a curve with "stem": true); shafts, beams and loads are beam figures.
-- Draw a figure only when it shows something the text does not: a figure that only repeats a formula or a number is left out.
+- The caption says what the student reads off the figure (a value, a crossing, a direction), in one sentence.
+- Never write sentences about how a figure is drawn ("schematic", "drawn at separate positions", "not to scale" is added by
+  the app where needed). A figure that needs an apology is the wrong figure: choose the right kind instead.
 
-## What to draw, by GATE paper
-**General Aptitude:** bars/plot for data interpretation; graph for seating/ordering puzzles and family trees.
-**Engineering Mathematics:** plot for function behaviour, maxima/minima, areas, regions, probability densities (shade with a where(...) curve and fill); cells for a matrix only when a pattern must be seen (otherwise a table block).
-**CS / DA:** gantt (CPU/disk scheduling, pipelining with row_labels "left" and stalls, timelines of states), cells (page-replacement traces, cache sets, memory frames, stack/queue, hashing, arrays, registers, instruction formats as bit fields), graph (BST/AVL/heaps, traversals, graph algorithms with a highlighted MST or shortest path, DFA/NFA/PDA with start and doublecircle, precedence/conflict graphs, RAG/wait-for graphs, DAGs, memory/pointer chains for addressing modes), plot (asymptotic growth, decision boundaries, distributions), bars (histograms).
-**CE:** beam + plot (SFD/BMD/deflection, ILDs), plot (Mohr's circle via param, stress-strain, hydrographs, consolidation, grading curves with logx), graph (CPM/PERT networks with the critical path highlighted), gantt (construction bar charts).
-**ME / PI / XE:** beam + plot (SFD/BMD), plot (Mohr's circle, cycles from point lists, vibration responses, cam displacement, EOQ curves, control charts), graph (block diagrams, project networks), gantt (Johnson's rule sequencing).
-**EE / EC / IN:** circuit (DC/AC networks, RC/RL transients, diode/BJT/MOSFET/op-amp circuits), plot (waveforms, transients, Bode with logx, Nyquist via param, transfer characteristics, step curves for digital timing diagrams), graph (control block diagrams, signal-flow graphs, state machines), cells (K-maps as a 4 x 4 grid, truth/state tables, registers, memory maps).
-**CH / BT / others:** plot (concentration-time, conversion, McCabe-Thiele with a step curve, growth curves), graph (process-flow and reaction-network block diagrams), bars (yields, compositions).
+## Which kind: in this order
+1. **Computed from physics** when the concept has one: the app computes the shape, so it is always right.
+   beam (+ "diagrams": SFD/BMD), mohr, pressure (hydrostatic force on a plate), waveform (modulation, ASK/FSK/PSK),
+   spectrum (AM, DSB-SC, SSB, line spectra), cycle (P-V, T-s, p-h: ideal gas, steam, refrigerants), control (step, Bode,
+   Nyquist, root locus). Give the numbers of the example; never work out the curve yourself and draw it as a plot.
+2. **Structured drawing**: geometry (anything with real positions and proportions: bodies, plates, traverses, free-body
+   diagrams, trusses, velocity triangles, floating bodies), block (signal and control block diagrams), circuit,
+   logic (gates from a Boolean expression, K-maps, timing diagrams), graph (trees, automata, networks), cells (arrays,
+   memory, traces, registers), gantt (schedules, pipelines), bars (data), plot (a function, data, a distribution).
+3. **mermaid**: flowcharts of procedures and decision rules, concept maps, state diagrams, sequence diagrams (protocols),
+   ER and class diagrams, timelines.
+4. **illustration** (last resort): a picture of a machine, apparatus or cut-away that a student must recognise and that
+   no kind above can draw (a four-stroke engine, a centrifugal pump, a Pelton wheel, a Francis turbine, a lathe, a
+   shaper, a casting mould and its gating, a welding set-up, a metacentric-height apparatus, a waveguide, a dish antenna).
+   Never for anything with values, scales, graphs, circuits or block diagrams. Use a stable "concept" key
+   (four_stroke_si_engine) so every PDF gets the same approved picture, and name every numbered part in "parts".
+Never draw a physical body or a signal chain with plot or graph, never a spectrum or waveform with graph, and never put
+two signals on one set of axes when the student must compare them: use stacked "panels" (plot) or waveform.
+
+## The standard figure for common concepts
+Use the figure a textbook uses: students recognise it and SMEs expect it.
+
+**EC / EE / IN**
+- AM: waveform (μ < 1, = 1, > 1) + spectrum + block diagrams of the modulator (square-law or switching) and the detector;
+  envelope detector as a circuit (diode, RC). DSB-SC, SSB, VSB: waveform/spectrum + block diagram (product modulator,
+  coherent detector with a local oscillator). FM/PM: waveform + spectrum (Carson bandwidth marked).
+- Digital modulation: the bit train with the ASK/FSK/PSK waveforms (waveform), then the constellation (geometry with
+  "axes": true, points and decision boundaries).
+- Sampling and quantisation: plot panels (signal, samples as stems, reconstruction). Line codes: plot with "step".
+- Control: block diagram of the loop (block, with feedback), step response, Bode, Nyquist, root locus (control).
+- Circuits: circuit; diode/transistor characteristics: plot; logic: logic (gates, K-map, timing).
+- Machines and power: phasor diagram (geometry arrows), equivalent circuit (circuit), torque-speed or efficiency curve (plot).
+
+**ME / PI / XE / CE**
+- Beams: beam with "diagrams": ["sfd", "bmd"]. Stresses: mohr; a stress element as geometry (a square with arrows).
+- Hydrostatic force on a plate: pressure. Buoyancy and stability: geometry (body upright and heeled, with G, B, B′, M,
+  weight and buoyancy arrows). Manometers: geometry (tube, fluid levels, depths as dims).
+- Thermodynamic cycles: cycle (Otto, Diesel, Dual, Brayton on p-v and T-s; Rankine on T-s with the dome; vapour
+  compression on p-h and T-s). Processes of a closed system: cycle or plot of the p-V path with the work area filled.
+- Mechanisms, kinematics, velocity triangles (turbines, pumps): geometry. Vibration responses: plot.
+- Surveying: geometry with bearing items and "north": true. Soil mechanics curves (grading, consolidation): plot ("logx").
+- Project networks: graph with the critical path highlighted. Construction schedules: gantt.
+
+**CS / DA**
+- Scheduling and pipelines: gantt. Page replacement, caches, memory, stacks, hashing, arrays: cells.
+- Trees, graphs, automata, precedence and wait-for graphs: graph. Algorithms and procedures: mermaid flowchart.
+- Protocols and message exchanges: mermaid sequenceDiagram. ER models: mermaid erDiagram. Growth of functions: plot.
+
+**Engineering Mathematics / General Aptitude**
+- Function behaviour, areas, distributions with shaded probabilities: plot. Data interpretation: bars or plot.
+- Seating and ordering puzzles, family trees: graph.
+
+## Figure rules
+- Labels match the text exactly (P1, A-B, q0, R1, G, B′); units on axes; the key value of the figure labelled.
+- Labels are plain text: Greek letters and sub/superscripts as characters (ω, π, θ, x₀, m³) or simple maths inside $...$.
+- A curve that follows a formula is an "expr" with a "range", never a few points (points are joined by straight lines).
+- Frequencies in waveforms are illustrative (carrier 10 to 20 times the message); the example's own numbers go in the text.
+- One idea per figure; a figure inside a worked example uses that example's numbers.

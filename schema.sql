@@ -52,6 +52,17 @@ create index if not exists events_at on events (at);
 alter table runs add column if not exists title text;                          -- the topic names, for the run list
 alter table books add column if not exists progress real default 0;            -- background processing of uploads
 alter table books add column if not exists step text;
+alter table run_topics add column if not exists quality jsonb;                -- the quality report of the finished PDF (Runs page)
+
+create table if not exists feedback (               -- what reviewers marked on a PDF: by category and page, the source of new checks and tests
+  id bigserial primary key, run_topic_id bigint references run_topics on delete cascade, email text,
+  category text, page int, comment text not null, created_at timestamptz default now());
+create index if not exists feedback_topic on feedback (run_topic_id);
+
+create table if not exists illustrations (          -- the library of approved illustrations, one per concept, reused by every PDF
+  concept text primary key, title text, description text, parts jsonb default '[]', path text,
+  status text not null default 'pending',          -- pending (waits for a person), approved, rejected
+  review text, created_by text, created_at timestamptz default now(), reviewed_by text, reviewed_at timestamptz);
 
 do $$ begin
   if not exists (select 1 from events) then        -- first start with usage tracking: carry over the existing runs
@@ -71,3 +82,4 @@ alter table units enable row level security;   alter table chunks enable row lev
 alter table runs enable row level security;    alter table run_topics enable row level security;
 alter table steps enable row level security;   alter table logs enable row level security;
 alter table events enable row level security;  alter table users enable row level security;
+alter table feedback enable row level security; alter table illustrations enable row level security;

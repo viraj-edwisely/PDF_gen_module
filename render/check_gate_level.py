@@ -49,7 +49,7 @@ def check(path):
     figs = sum(1 for s in notes for b in walk_blocks(s.get('blocks', [])) if b.get('type') in ('figure', 'image'))
     if figs == 0: W.append('no figures - most GATE topics need at least one diagram/graph/plot (see figure_catalogue.md)')
     if not c.get('traps'): E.append('missing "traps": list the 5-10 mistakes GATE questions are designed to catch')
-    if not (5 <= len(c.get('revision_card', [])) <= 10): W.append('revision card should have 5-8 one-liners')
+    if not c.get('revision') and not (5 <= len(c.get('revision_card', [])) <= 10): W.append('revision card should have 5-8 one-liners')
 
     # ---------------- questions
     def qcheck(q, where, original):
@@ -116,6 +116,12 @@ def check(path):
     return E, W
 
 
+def key_formulas(note):
+    """The formulas a notes section marks as key, or else its first two (outside its worked examples). Shared by the
+    revision step and the formula sheet, so both show the same formulas."""
+    fs = [b for b in note.get('blocks', []) if isinstance(b, dict) and b.get('type') == 'formula' and b.get('latex')]
+    return [b['latex'] for b in fs if b.get('key')] or [b['latex'] for b in fs[:2]]
+
 if __name__ == '__main__':
     bad = 0
     for p in sys.argv[1:]:
@@ -125,3 +131,4 @@ if __name__ == '__main__':
         for w in W: print('  warning', w)
         bad += bool(E)
     sys.exit(1 if bad else 0)
+

@@ -13,3 +13,6 @@ openpyxl
 pandas
 requests
 beautifulsoup4
+scipy
+CoolProp>=8.0
+mmdr>=0.4

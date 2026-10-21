@@ -3,7 +3,7 @@ and by the content checks, so a formula that can be rewritten here is never sent
 import re
 
 FIXES = {r'\land': r'\wedge', r'\lor': r'\vee', r'\lnot': r'\neg', r'\implies': r'\Rightarrow', r'\iff': r'\Leftrightarrow', r'\le': r'\leq',
-         r'\ge': r'\geq', r'\ne': r'\neq', r'\dfrac': r'\frac', r'\tfrac': r'\frac', r'\cfrac': r'\frac', r'\dbinom': r'\binom', r'\tbinom': r'\binom',
+         r'\ge': r'\geq', r'\ne': r'\neq', r'\tfrac': r'\frac', r'\cfrac': r'\dfrac', r'\dbinom': r'\binom', r'\tbinom': r'\binom',
          r'\text': r'\mathrm', r'\textrm': r'\mathrm', r'\operatorname': r'\mathrm', r'\textbf': r'\mathbf', r'\bm': r'\mathbf', r'\boldsymbol': r'\mathbf',
          r'\emph': r'\mathit', r'\textit': r'\mathit', r'\dots': r'\ldots', r'\lVert': r'\Vert', r'\rVert': r'\Vert', r'\gets': r'\leftarrow',
          r'\lt': '<', r'\gt': '>', r'\square': '□', r'\Box': '□', r'\&': '&', r'\coloneqq': ':=', r'\eqqcolon': '=:', r'\stackrel': r'\overset',
@@ -39,7 +39,9 @@ def _env(m):
 
 def normalize(tex):
     """One formula, rewritten for mathtext: unsupported environments, decorations and spellings become drawable ones."""
-    t = re.sub(r'\\(?:tag|label)\*?' + ARG, '', tex)
+    t = re.sub(r'\\\\(?=[A-Za-z]{2})', r'\\', tex)            # \\text: a command over-escaped in the JSON, not a line break
+    t = re.sub(r'(?<!\\)([_^])\s*([-+][\w.\\]+|\d+(?:\.\d+)?|[A-Za-z]{2,})', r'\1{\2}', t)    # ^-3, ^-j\omega, ^10, _max: the whole run raised
+    t = re.sub(r'\\(?:tag|label)\*?' + ARG, '', t)
     t = re.sub(r'\\(?:boxed|cancel|bcancel|xcancel|phantom|hphantom|vphantom)' + ARG, r'\1', t)
     t = re.sub(r'\\(?:under|over)brace' + ARG + r'(?:\s*[_^]\s*(?:' + ARG + r'|\w))?', r'\1', t)
     t = re.sub(r'\\x(right|left)arrow(?:\[[^\]]*\])?' + ARG, r'\\overset{\2}{\\\1arrow}', t)
@@ -53,6 +55,46 @@ def normalize(tex):
     return re.sub(r'\\mathrm\{([^{}]*)\}', lambda m: '\\mathrm{' + re.sub(r'(?<!\\) ', lambda _: '\\ ', m.group(1)) + '}', t)     # mathtext drops spaces inside \mathrm
 
 
+def display(tex):
+    """A display formula: normalized, and every fraction outside a superscript or subscript drawn full size (\\dfrac), so
+    numerator and denominator read at the size of the text around them."""
+    t, out, script = normalize(tex), [], []           # script: for each open brace, whether it opened a ^{...} or _{...}
+    i = 0
+    while i < len(t):
+        if t.startswith('\\frac', i) and not any(script) and not t[i + 5:i + 6].isalpha():
+            out.append('\\dfrac'); i += 5; continue
+        c = t[i]
+        if c == '\\' and i + 1 < len(t): out.append(t[i:i + 2]); i += 2; continue
+        if c == '{': script.append(bool(out) and out[-1] in ('^', '_'))
+        elif c == '}' and script: script.pop()
+        out.append(c); i += 1
+    return ''.join(out)
+
+
+SUP = str.maketrans('0123456789-+', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺')
+UNIT = r'(?:mm|cm|km|m|s|kg|g|N|kN|MN|Pa|kPa|MPa|GPa|J|kJ|MJ|W|kW|MW|Hz|rad|K|A|V|Ω|mol|L)'
+
+
+def plain(text):
+    """Running text as written by a model, made printable before its $...$ maths is drawn: units and powers that sit
+    outside maths become characters (m$^3$ -> m³, mm^4 -> mm⁴, 10^6 -> 10⁶, kg/m3 -> kg/m³, N.m -> N·m), and a power with
+    letters (e^-jwt) becomes maths. Maths between $...$ is left as it is."""
+    t = re.sub(r'(?<=[A-Za-zΩ°)\]])\$\s*\^\s*\{?\s*([-+]?\d+)\s*\}?\s*\$', lambda m: m.group(1).translate(SUP), text)   # mm$^2$, s$^{-1}$
+    t = re.sub(r'\$\s*\\(?:mathrm|text)\{\s*([A-Za-zΩ/·.\s]+?)\s*\}\s*\^\s*\{?\s*([-+]?\d+)\s*\}?\s*\$',
+               lambda m: m.group(1).strip() + m.group(2).translate(SUP), t)                                     # $\mathrm{m}^3$
+    parts = re.split(r'((?<!\\)\$.+?(?<!\\)\$)', t)
+    for k in range(0, len(parts), 2):                       # outside maths only
+        p = parts[k]
+        p = re.sub(r'(?<=[\w)\]])(?:\^|\*\*)\{?([-+]?\d+)\}?(?!\w|\.\d)', lambda m: m.group(1).translate(SUP), p)    # mm^4, 10^6, x**2
+        p = re.sub(r'(?<![\w$\\])([A-Za-z])\^\{?([-+]?[A-Za-z][\w]*)\}?', r'$\1^{\2}$', p)                      # e^-jwt, 2^n stays below
+        p = re.sub(r'(?<=\d)\^\{?([A-Za-z]\w*)\}?', r'$^{\1}$', p)                                              # 2^n
+        p = re.sub(r'(?<![\\$])\b(\w+)\^\{([^{}$]+)\}', r'$\1^{\2}$', p)                                          # x^{2.5}, 10^{n-1}
+        p = re.sub(rf'(\d\s?|/)({UNIT})([234])\b', lambda m: m.group(1) + m.group(2) + m.group(3).translate(SUP), p)   # 9600 mm2, kg/m3
+        p = re.sub(r'\b([kM]?N)\s?\.\s?(m)\b', r'\1·\2', p)                                                           # N.m, kN.m
+        parts[k] = p.replace(' -> ', ' → ').replace(' <- ', ' ← ').replace(' => ', ' ⇒ ')                                # arrows typed as text
+    return ''.join(parts)
+
+
 def inline(tex):
     """Maths inside a sentence: sums and products with their limits beside the sign (as in running text), not stacked
     above and below it, so the line keeps its height."""
@@ -64,10 +106,11 @@ def inline(tex):
 
 def lines(tex):
     """A display formula as the lines to draw: the rows of align/gather, or rows split by \\\\, each on its own line."""
+    tex = re.sub(r'\\\\(?=[A-Za-z]{2})', r'\\', tex)            # \\frac over-escaped: a command, not a row break
     m = re.fullmatch(r'\s*\\begin\{(' + '|'.join(ROWS_ENVS) + r')\*?\}(?:\{[^{}]*\})?(.*)\\end\{\1\*?\}\s*', tex, re.S)
     body = m.group(2) if m else tex
-    if '\\begin{' in body or '\\\\' not in body: return [normalize(tex if not m else body)]
-    return [normalize(' '.join(r)) for r in _rows(body)]
+    if '\\begin{' in body or '\\\\' not in body: return [display(tex if not m else body)]
+    return [display(' '.join(r)) for r in _rows(body)]
 
 
 BAD = re.compile(r'\\begin|\\end')          # what is left after normalize() that mathtext still cannot draw

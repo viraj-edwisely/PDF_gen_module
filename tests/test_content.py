@@ -10,8 +10,21 @@ def test_blocks_are_tidied():
                    {'type': 'worked_example', 'question': 'Q?', 'answer': 'A.'}, {'type': 'table', 'rows': [{'a': 1, 'b': 2}]}], 'gate')
     assert [b['type'] for b in bs] == ['para', 'para', 'bullets', 'formula', 'example', 'table']
     assert bs[1]['text'] == 'x' and bs[2]['items'] == ['a', 'b'] and bs[3]['latex'] == 'x^2'
-    assert bs[4]['problem'] == 'Q?' and bs[4]['solution'] == 'A.'
+    assert bs[4]['problem'] == 'Q?' and bs[4]['steps'] == [{'text': 'A.'}]          # a solution paragraph becomes a step
     assert bs[5]['header'] == ['a', 'b'] and bs[5]['rows'] == [['1', '2']]
+
+
+def test_solutions_become_steps_and_symbol_tables_become_where_lists():
+    """SME feedback: solutions written as paragraphs, and Symbol / Meaning / Unit tables after every formula."""
+    ex = C.block({'type': 'example', 'problem': 'p', 'solution': {'given': ['m = 20 kg'], 'steps': [
+        {'label': 'Kinetic energy', 'formula': r'$\Delta KE = 2.0\ \mathrm{kJ}$'}, '2. Then the potential energy.'], 'answer': 35.6}}, 'gate')
+    assert ex['steps'] == [{'say': 'Kinetic energy', 'latex': r'\Delta KE = 2.0\ \mathrm{kJ}'}, {'text': 'Then the potential energy.'}]
+    assert ex['given'] == ['m = 20 kg'] and ex['answer'] == '35.6' and 'solution' not in ex
+    assert C._steps('First find A.\n\n1. Then B.\n2. Then C.') == [{'text': 'First find A.'}, {'text': 'Then B.'}, {'text': 'Then C.'}]
+    bs = C.blocks([{'type': 'formula', 'latex': r'F = \rho g V'},
+                   {'type': 'table', 'header': ['Symbol', 'Meaning', 'SI unit'], 'rows': [[r'$\rho$', 'density', 'kg/m$^3$'], ['g', 'gravity', 'm/s$^2$']]}], 'gate')
+    assert len(bs) == 1 and bs[0]['where'] == [[r'$\rho$', 'density', 'kg/m$^3$'], ['g', 'gravity', 'm/s$^2$']]
+    assert C._where({'V': 'volume'}) == [['V', 'volume']] and C._where(['ρ = density of the fluid (kg/m³)']) == [['ρ', 'density of the fluid', 'kg/m³']]
 
 
 def test_questions_are_tidied():
@@ -142,3 +155,22 @@ def test_parse_json_escapes_and_wrapping():
     assert llm.parse_json('[{"a": 1}]') == {'a': 1}
     assert llm.parse_json(r'{"a": "x\\u0000", "b": "y\u0000z"}') == {'a': r'x\u0000', 'b': 'yz'}
     assert not llm.stuck('[' + '0,' * 1400)
+
+
+def test_plan_must_teach_every_subtopic_and_explain_missing_figures():
+    plan = C.gate_plan({'objectives': ['x'], 'sections': [{'heading': 'Buoyant force', 'figure': 'geometry: ...'}, {'heading': 'Metacentre', 'figure': ''},
+                                                          {'heading': 'Experimental GM', 'figure': '', 'no_figure_reason': 'a table says it all'}],
+                        'coverage': [{'subtopic': 'Archimedes principle', 'section': 'Buoyant force'}]})
+    probs = C.gate_plan_problems(plan, ['Archimedes principle', 'Metacentric height', 'Stability of floating bodies'])
+    msgs = ' '.join(m for _, m, _ in probs)
+    assert 'Stability of floating bodies' in msgs and 'Archimedes' not in msgs          # covered by name, missing reported
+    assert any(p == ('sections', 1) for p, _, _ in probs) and not any(p == ('sections', 2) for p, _, _ in probs)
+
+
+def test_long_paragraphs_figure_apologies_and_repeated_formulas_are_flagged():
+    note = {'heading': 'S', 'blocks': [{'type': 'para', 'text': 'word ' * 90},
+                                       {'type': 'figure', 'kind': 'plot', 'spec': {}, 'caption': 'The cross-section is schematic; parts are drawn at separate positions.'},
+                                       {'type': 'formula', 'latex': 'F_B = \rho g V', 'key': True}]}
+    msgs = [m for _, m, _ in C.writing_problems(note, ('notes', 1), {C._key('F_B = \rho g V')})]
+    assert any('90 words' in m for m in msgs) and any('schematic' in m for m in msgs) and any('repeats' in m for m in msgs)
+    assert C.writing_problems({'heading': 'S', 'blocks': ['Short and plain.']}, ('notes', 0)) == []

@@ -5,8 +5,8 @@ because the API's schema dialect does not fit our content JSON. Rate limits (429
 retried by the SDK (RETRIES times, with growing waits that honour Retry-After), and at most `concurrent` calls are in
 flight at once. The system prompt is the same for every call of a run, so it is sent first and cached automatically.
 """
-import functools, importlib, json, re, threading
-from config import DEFAULT_EFFORT, MODEL, RETRIES, cost, secret
+import base64, functools, importlib, json, re, threading
+from config import DEFAULT_EFFORT, IMAGE_MODEL, MODEL, RETRIES, cost, secret
 
 SLOT = threading.BoundedSemaphore(MODEL['concurrent'])
 CUT_OFF = '{} reply was cut off at its length limit: write the same items more concisely (shorter explanations)'
@@ -25,12 +25,14 @@ def _guess(system, user, text):
     return n, len(text) // 4, n
 
 
-def _openai(system, user, max_tokens, effort):
+def _openai(system, user, max_tokens, effort, images=()):
     from openai import OpenAI
     text, usage, finish = '', (0, 0, 0), None
+    content = user if not images else [{'type': 'text', 'text': user}] + [            # PNGs shown to the model after the text, in order
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(png).decode(), 'detail': 'high'}} for png in images]
     for ev in OpenAI(api_key=secret('OPENAI_API_KEY'), max_retries=RETRIES).chat.completions.create(
             model=MODEL['name'], max_completion_tokens=max_tokens, reasoning_effort=effort, stream=True, stream_options={'include_usage': True},     # reasoning tokens count towards the limit and the price
-            response_format={'type': 'json_object'}, messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}]):
+            response_format={'type': 'json_object'}, messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': content}]):
         if ev.choices:
             text += ev.choices[0].delta.content or ''
             if stuck(text): raise LLMError(STUCK.format('OpenAI'), text, _guess(system, user, text))
@@ -100,13 +102,14 @@ def _transient():
     return tuple(kinds)
 
 
-def generate_json(system, user, max_tokens=None, effort=DEFAULT_EFFORT):
+def generate_json(system, user, max_tokens=None, effort=DEFAULT_EFFORT, images=()):
     """Returns (parsed object, {'in': tokens, 'out': tokens, 'cost': USD}, raw text). Waits for a free slot.
-    A call that fails on a transient error is made up to twice more; every failure is raised as an LLMError with its usage."""
+    images: PNG bytes the model looks at (the visual review). A call that fails on a transient error is made up to twice
+    more; every failure is raised as an LLMError with its usage."""
     bill = lambda t_in, t_out, billed_in: {'in': t_in, 'out': t_out, 'cost': cost(billed_in, t_out)}
     for attempt in range(3):
         try:
-            with SLOT: text, *u = _openai(system, user, max_tokens or MODEL['max_out'], effort)
+            with SLOT: text, *u = _openai(system, user, max_tokens or MODEL['max_out'], effort, images)
             break
         except LLMError as e:
             if e.usage: e.usage = bill(*e.usage)
@@ -116,6 +119,16 @@ def generate_json(system, user, max_tokens=None, effort=DEFAULT_EFFORT):
     usage = bill(*u)
     try: return parse_json(text), usage, text
     except LLMError as e: e.usage = usage; raise
+
+
+def generate_image(prompt):
+    """One illustration from the image model (config.IMAGE_MODEL). Returns (PNG bytes, cost in USD)."""
+    from openai import OpenAI
+    try:
+        r = OpenAI(api_key=secret('OPENAI_API_KEY'), max_retries=RETRIES).images.generate(
+            model=IMAGE_MODEL['name'], prompt=prompt, size=IMAGE_MODEL['size'], quality=IMAGE_MODEL['quality'], n=1)
+    except _transient() as e: raise LLMError(f'The image model failed: {type(e).__name__}: {e}') from e
+    return base64.b64decode(r.data[0].b64_json), IMAGE_MODEL['price']
 
 
 def embed(texts):

@@ -5,9 +5,9 @@ and checked (content.py); only the broken items go back to the model, once; what
 GATE: context -> PYQs -> plan -> notes (two calls) and questions, at the same time -> second check of the answer keys -> PDF.
 Non-GATE: context -> plan -> topics (three per call, at the same time) -> case study, practice and revision -> PDF.
 """
-import functools, json, os, re, subprocess, sys, tempfile
+import functools, json, os, re, shutil, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
-import content as C, db, llm, pyq, retrieve
+import content as C, db, llm, pyq, quality, retrieve, review
 from config import DEFAULT_EFFORT, MODEL, PARALLEL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,10 +44,16 @@ def figure_reference():
     return r.stdout.decode('utf-8')
 
 
-def system_prompt(mode):
+STYLES = {'EC': 'electrical', 'EE': 'electrical', 'IN': 'electrical', 'ME': 'mechanical', 'PI': 'mechanical', 'XE': 'mechanical',
+          'AE': 'mechanical', 'MT': 'mechanical', 'CE': 'civil', 'AG': 'civil', 'ES': 'civil', 'CS': 'computing', 'DA': 'computing'}
+
+
+def system_prompt(mode, paper=''):
+    """The system prompt of a run: rules, maths, figures and, for GATE, the conventions of its paper (cached per paper)."""
     shared = dict(MATHS=read('maths.md'), FIGURES=read('figure_catalogue.md') + '\n\n## Exact spec of each kind\n\n' + figure_reference())
     if mode == 'gate':
-        return fill(read('gate/system.md'), STANDARD=read('gate/gate_level_standard.md'), SCHEMA=read('gate/content_schema.md'), **shared)
+        style = read(f"gate/style/{STYLES.get(str(paper or '').upper(), 'general')}.md")
+        return fill(read('gate/system.md'), STANDARD=read('gate/gate_level_standard.md'), SCHEMA=read('gate/content_schema.md'), STYLE=style, **shared)
     example = open(os.path.join(RENDER, 'example_nongate.json'), encoding='utf-8').read()
     return fill(read('nongate/system.md'), SCHEMA=read('nongate/content_schema.md'), EXAMPLE=example, **shared)
 
@@ -66,7 +72,7 @@ class Job:
 
     def __init__(self, rt, run):
         self.rt, self.run = rt, run
-        self.system = system_prompt(run['mode'])
+        self.system = system_prompt(run['mode'], (run['options'] or {}).get('paper'))
         self.feedback = (run['options'] or {}).get('feedback')
         self.effort = (run['options'] or {}).get('effort') or DEFAULT_EFFORT
 
@@ -116,8 +122,8 @@ class Job:
             self.save(name, out, {'in': 0, 'out': 0, 'cost': 0})
         return out
 
-    def _call(self, prompt, usage, max_tokens=None):
-        out, u, raw = llm.generate_json(self.system, prompt, max_tokens, self.effort)
+    def _call(self, prompt, usage, max_tokens=None, images=()):
+        out, u, raw = llm.generate_json(self.system, prompt, max_tokens, self.effort, images)
         add(usage, u)
         return out, raw
 
@@ -154,7 +160,7 @@ class Job:
             for p, m, h in probs:
                 if not h: self.warn(f'{C.label(p, out)}: {m[:200]}')
 
-    def ask(self, name, user, tidy=lambda o: o, problems=lambda o: []):
+    def ask(self, name, user, tidy=lambda o: o, problems=lambda o: [], images=()):
         """One model step: call, tidy, check; a reply that is unusable as a whole is asked for once more; broken items
         go back for one repair; what is still broken is left out. The result is saved, so Resume never pays twice."""
         self._guard()
@@ -164,7 +170,7 @@ class Job:
         usage, out, raw, probs = {'in': 0, 'out': 0, 'cost': 0.0}, None, '', []
         for attempt in range(2):
             try:
-                out, raw = self._call(user if not attempt else user + RETRY.format(problems='; '.join(m for _, m, _ in probs[:4])), usage)
+                out, raw = self._call(user if not attempt else user + RETRY.format(problems='; '.join(m for _, m, _ in probs[:4])), usage, images=images)
                 out = tidy(out); probs = problems(out)
             except llm.LLMError as e:
                 add(usage, e.usage)         # a failed call is paid for too
@@ -219,8 +225,9 @@ def run_book(run):
     return rows[0] if rows else None
 
 
-def render_and_store(job, mode, content):
-    """Render the PDF in a subprocess, upload PDF and JSON, mark the topic finished."""
+def render_and_store(job, mode, content, look=None):
+    """Render the PDF in a subprocess, upload PDF and JSON, save its quality report, mark the topic finished.
+    look(pdf bytes): an extra check of the finished pages (the visual review) that may add notes before the status is set."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
         src, pdf = os.path.join(folder, 'content.json'), os.path.join(folder, 'out.pdf')
         with open(src, 'w', encoding='utf-8') as f: json.dump(content, f)
@@ -230,11 +237,16 @@ def render_and_store(job, mode, content):
     try: report = json.loads(r.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError): report = {}
     for w in report.get('warnings', [])[:10]: job.warn('In the PDF: ' + w)
+    if look: look(data)
     base = f"{job.run['id']}/{job.rt['id']}"
     job.log(f'PDF rendered ({len(data) // 1024} KB), uploading')
     db.upload('outputs', base + '.pdf', data, 'application/pdf')
     db.upload('outputs', base + '.json', json.dumps(content, ensure_ascii=False).encode('utf-8'), 'application/json')
     warns = db.sql('select warnings from run_topics where id=%s', (job.rt['id'],))[0]['warnings']
+    if mode == 'gate':
+        import pymupdf
+        try: db.sql('update run_topics set quality=%s::jsonb where id=%s', (json.dumps(quality.report(content, warns, pymupdf.open(stream=data, filetype='pdf').page_count)), job.rt['id']))
+        except Exception as e: job.log(f'quality report failed: {type(e).__name__}: {e}')
     db.sql("update run_topics set status=%s, step='done', pdf_path=%s, json_path=%s where id=%s", ('warnings' if warns else 'done', base + '.pdf', base + '.json', job.rt['id']))
 
 
@@ -273,15 +285,16 @@ def figure_brief(f):
 def verify(job, topic, o, notes, q):
     """The writer model, asked again to check, re-solves every question and worked example and reviews whether examples, figures and questions
     teach; the items it disputes or finds weak go back to the writer once."""
-    fields = ('qtype', 'question', 'options', 'answer', 'answer_range', 'solution')
+    fields = ('qtype', 'question', 'options', 'answer', 'answer_range', 'solution', 'steps')
     items = [{'ref': C.ref(('practice', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['practice'])]
     items += [{'ref': C.ref(('sample_paper', 'questions', i)), **{k: x.get(k) for k in fields}} for i, x in enumerate(q['sample_paper']['questions'])]
     for i, n in enumerate(notes):
         for j, b in enumerate(n['blocks']):
             if b.get('type') == 'example':
-                figs, rest = C._figures_and_text([b.get('problem'), b.get('solution')])
-                items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'worked_example': rest[:1], 'solution': rest[1:],
-                              'figures': [figure_brief(f) for f in figs]})
+                figs, rest = C._figures_and_text([b.get('problem'), b.get('solution')] + [st.get('blocks') for st in b.get('steps') or [] if isinstance(st, dict)])
+                steps = [{k: v for k, v in st.items() if k != 'blocks'} for st in b.get('steps') or [] if isinstance(st, dict)]
+                items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'worked_example': rest[:1], 'given': b.get('given'),
+                              'solution': steps or rest[1:], 'answer': b.get('answer'), 'figures': [figure_brief(f) for f in figs]})
             elif b.get('type') == 'figure':
                 items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'figure': figure_brief(b)})
     valid = {x['ref'] for x in items}
@@ -322,10 +335,11 @@ def verify(job, topic, o, notes, q):
 
 def gate(job):
     run, rt = job.run, job.rt
-    o, topic = run['options'], rt['name']
+    o = run['options']
+    topic, subtopics = C.split_topic(rt['name'], ', '.join((o.get('subtopics') or {}).get(rt['name']) or []))     # older runs: subtopics in the name
     book = run_book(run)
     job.progress('Reading the book' if book else 'Starting')
-    search = lambda sections=(): retrieve.topic_context(book, run['scope_start'], run['scope_end'], topic, sections)
+    search = lambda sections=(): retrieve.topic_context(book, run['scope_start'], run['scope_end'], ' '.join([topic] + subtopics), sections)
     def context():
         ctx = search()
         if book and book_warning(ctx): job.warn(book_warning(ctx))
@@ -334,7 +348,8 @@ def gate(job):
     job.progress('Previous-year questions')
     pyqs = job.step('pyq', lambda: pyq_step(job, topic, o))
     pyq_brief = '\n'.join('- ' + q['question'][:160] for q in pyqs) or '(none)'
-    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=ctx['text'], BOOK_NOTE=book_note(ctx['found'], ctx['text']), USER_PROMPT=o.get('prompt') or '(none)')
+    base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=ctx['text'], BOOK_NOTE=book_note(ctx['found'], ctx['text']), USER_PROMPT=o.get('prompt') or '(none)',
+                SUBTOPICS='; '.join(subtopics) or '(none given: take them from the syllabus line and the standard textbooks)')
 
     def book_for(name, sections):
         """The prompt fields with book text searched for these planned sections (a whole scope is already all there)."""
@@ -342,9 +357,18 @@ def gate(job):
         c = job.step(name, lambda: search([s['heading'] for s in sections]))
         return {**base, 'BOOK': c['text'], 'BOOK_NOTE': book_note(c['found'], c['text'])}
 
+    def reference():
+        """Pages of the reference handbook about this topic (the whole book is searched), for the plan step only."""
+        rows = db.sql('select * from books where id=%s', (o['reference_book'],))
+        if not rows: return ''
+        b = rows[0]
+        return retrieve.topic_context(b, 1, max(1, b['page_count'] - b['page_offset']), ' '.join([topic] + subtopics))['text'][:40_000]
+    ref_text = job.step('reference', reference) if o.get('reference_book') else ''
     job.progress('Planning the sections')
-    plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or ''), tidy=C.gate_plan, problems=C.gate_plan_problems)
+    plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or '', REFERENCE=ref_text or '(none)'), tidy=C.gate_plan,
+                   problems=lambda p: C.gate_plan_problems(p, subtopics))
     archetypes = '; '.join(map(str, plan.get('archetypes') or []))
+    notation = json.dumps(plan.get('notation') or [], ensure_ascii=False) if plan.get('notation') else '(none given: define each symbol where it is first used)'
 
     # three calls depend only on the plan, so they run at the same time: the two halves of the notes, and all the questions
     sections = plan['sections']
@@ -353,14 +377,16 @@ def gate(job):
 
     def write_notes(k, group):
         others = ', '.join(s['heading'] for s in sections if s not in group) or '(none)'
-        out = job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others, ARCHETYPES=archetypes),
+        out = job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others,
+                                            ARCHETYPES=archetypes, STORYLINE=plan.get('storyline') or '(not given)', NOTATION=notation),
                       tidy=lambda x: C.align_notes(C.gate_notes(x), group), problems=lambda out: C.gate_notes_problems(out, group))
         return [n for n in out['notes'] if n['blocks']]        # a section still broken after its repair was emptied: left out
 
     job.progress('Writing notes and questions (at the same time)')
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         note_jobs = [pool.submit(write_notes, k, g) for k, g in enumerate(groups)]
-        q_job = pool.submit(job.ask, 'questions', fill(read('gate/questions.md'), **base, ARCHETYPES=archetypes, HEADINGS=', '.join(s['heading'] for s in sections), PYQS=pyq_brief),
+        q_job = pool.submit(job.ask, 'questions', fill(read('gate/questions.md'), **base, ARCHETYPES=archetypes, HEADINGS=', '.join(s['heading'] for s in sections),
+                                                      PYQS=pyq_brief, NOTATION=notation),
                             C.gate_questions, lambda out: C.gate_questions_problems(out, o['paper']))
         notes, q = [n for f in note_jobs for n in f.result()], q_job.result()
 
@@ -369,9 +395,16 @@ def gate(job):
         notes, q = verify(job, topic, o, notes, q)
     else: job.warn(UNCHECKED_NOTE)
 
+    job.progress('Revision page')
+    try: revision = job.ask('revision', fill(read('gate/revision.md'), **base, DIGEST=json.dumps(C.notes_digest(notes), ensure_ascii=False)),
+                            tidy=lambda x: C.gate_revision(x, notes), problems=lambda x: C.gate_revision_problems(x, notes))
+    except llm.LLMError as e:       # the revision page is built from the notes in code instead
+        job.warn(f'The revision page was built from the notes without a summary ({str(e)[:120]}).')
+        revision = C.revision_from_notes(notes)
+
     def assemble():
-        c = {'paper': o['paper'], 'subject': o['subject'], 'topic_name': topic, 'syllabus_line': plan.get('syllabus_line', ''), 'subtitle': plan.get('subtitle', ''),
-             'objectives': plan['objectives'], 'prerequisites': plan.get('prerequisites', []), 'notes': notes, 'traps': q['traps'], 'revision_card': q['revision_card'],
+        c = {'paper': o['paper'], 'subject': o['subject'], 'topic_name': topic, 'subtopics': subtopics, 'syllabus_line': plan.get('syllabus_line', ''), 'subtitle': plan.get('subtitle', ''),
+             'objectives': plan['objectives'], 'prerequisites': plan.get('prerequisites', []), 'coverage': plan.get('coverage', []), 'notes': notes, 'traps': q['traps'], 'revision': revision, 'revision_card': q.get('revision_card') or [],
              'pyqs': pyqs, 'practice': q['practice'], 'sample_paper': q['sample_paper']}
         errors = C.gate_check(c)[0]
         bad = sorted({int(m.group(1)) for e in errors if (m := re.match(r'PYQ(\d+):', e))}, reverse=True)
@@ -382,8 +415,14 @@ def gate(job):
         return c
     job.progress('Assembling')
     content = job.step('content', assemble)
+    if o.get('visual_review'):
+        job.progress('Visual review of the figures')
+        content = review.figures(job, topic, o, content, plan)
+    content, folder = review.illustrations(job, content, o.get('illustrations'))
     job.progress('Rendering the PDF')
-    render_and_store(job, 'gate', content)
+    try: render_and_store(job, 'gate', content, look=(lambda pdf: review.pages(job, topic, pdf)) if o.get('visual_review') else None)
+    finally:
+        if folder: shutil.rmtree(folder, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- Non-GATE

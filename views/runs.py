@@ -4,10 +4,11 @@ import openpyxl
 import pandas as pd
 import pymupdf
 import streamlit as st
-import db, jobs, pipeline
+import content as C, db, jobs, pipeline, quality
 from config import STALE_SECONDS
 from ui import can_manage, user
 
+FEEDBACK = ['Teaching (flow, simplicity, coverage)', 'Maths or units', 'Figure', 'Layout', 'Worked example', 'Questions or answer key', 'Other']
 TOPIC_CHIP = {'queued': '⏳ Waiting', 'running': '⚙️ Working', 'done': '✅ Ready', 'warnings': '✅ Ready · notes to review', 'failed': '❌ Failed', 'stopped': '⛔ Stopped'}
 RUN_STATUS = {'queued': 'Waiting', 'running': 'Working', 'done': 'Done', 'partial': 'Partly failed', 'failed': 'Failed',
               'stopped': 'Stopped (cost cap)', 'cancelled': 'Cancelled', 'interrupted': 'Interrupted'}
@@ -86,6 +87,10 @@ def topic_card(run, t):
         if c3.toggle('Preview first pages', key=f"pv{t['id']}"):
             doc = pymupdf.open(stream=fetch(t['pdf_path']), filetype='pdf')
             st.image([p.get_pixmap(dpi=60).tobytes('png') for p in list(doc)[:3]], width=260)
+        if t.get('quality'):
+            with st.expander('Quality report'):
+                st.dataframe(pd.DataFrame(quality.rows(t['quality']), columns=['Measure', 'Value']).astype(str), hide_index=True, width='stretch')
+        feedback_box(t)
         with st.expander('Change this PDF'):
             feedback = st.text_area('Regenerate with your feedback (runs the model again and costs money)', key=f"fb{t['id']}", placeholder='e.g. more worked examples, simpler language')
             if st.button('Regenerate', key=f"rg{t['id']}", disabled=not feedback):
@@ -93,10 +98,31 @@ def topic_card(run, t):
                 if run['mode'] == 'gate': options['topics'] = [t['name']]
                 new = jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), options, user())
                 st.success(f'Started run #{new}. Refresh the list to open it.')
+            if run['mode'] == 'gate' and st.button('Re-render with the current renderer (no model, no cost)', key=f"cur{t['id']}",
+                                                   help='Draws this PDF again from its saved content with the current layout, maths and figure code, and brings older '
+                                                        'content to the current structure (solutions as steps, symbol lists).'):
+                try: pipeline.rerender(t, run, C.retidy(json.loads(fetch(t['json_path'])))); fetch.clear(); db.event(user(), 're-rendered', run['id'], topic=t['name']); st.success('Done: the PDF was replaced.')
+                except Exception as e: st.error(f'Could not render: {e}')
             fixed = st.file_uploader('Or upload a corrected JSON (download it above, edit it, upload it here): re-renders without the model', type='json', key=f"up{t['id']}")
             if fixed and st.button('Re-render from this JSON', key=f"rr{t['id']}"):
                 try: pipeline.rerender(t, run, json.loads(fixed.getvalue())); fetch.clear(); db.event(user(), 're-rendered', run['id'], topic=t['name']); st.success('Done: the PDF was replaced.')
                 except Exception as e: st.error(f'Could not render: {e}')
+
+
+def feedback_box(t):
+    """Reviewers mark what is wrong (category, page, comment); every entry is kept, becomes a test case and, where it can,
+    a new automatic check."""
+    notes = db.sql('select * from feedback where run_topic_id=%s order by id', (t['id'],))
+    with st.expander(f"Reviewer feedback ({len(notes)})" if notes else 'Reviewer feedback'):
+        for n in notes: st.markdown(f"- **{n['category']}**" + (f" · page {n['page']}" if n['page'] else '') + f" · {n['comment']}  \n  <small>{n['email']}, {n['created_at']:%d %b %H:%M}</small>", unsafe_allow_html=True)
+        with st.form(f"fbf{t['id']}", clear_on_submit=True, border=False):
+            c1, c2 = st.columns([3, 1])
+            cat = c1.selectbox('What kind of problem', FEEDBACK, key=f"fbc{t['id']}")
+            page = c2.number_input('Page (0: whole PDF)', 0, 500, 0, key=f"fbp{t['id']}")
+            text = st.text_area('What is wrong, and what it should be', key=f"fbt{t['id']}", placeholder='e.g. the BMD should be parabolic under the UDL; units show as m₃')
+            if st.form_submit_button('Add feedback') and text.strip():
+                db.sql('insert into feedback (run_topic_id, email, category, page, comment) values (%s,%s,%s,%s,%s)', (t['id'], user(), cat, page or None, text.strip()))
+                db.event(user(), 'feedback', t['run_id'], topic=t['name'], category=cat); st.rerun()
 
 
 def show(run_id, was_active):
@@ -140,6 +166,15 @@ def show(run_id, was_active):
 
 st.title('Runs')
 runs = db.sql(LIST_SQL)
+with st.expander('All reviewer feedback'):
+    fb = db.sql("""select f.created_at, f.email, f.category, f.page, f.comment, t.name as topic, t.run_id from feedback f join run_topics t on t.id = f.run_topic_id
+                   order by f.id desc limit 2000""")
+    if fb:
+        df = pd.DataFrame(fb)
+        st.dataframe(df[['created_at', 'topic', 'category', 'page', 'comment', 'email']], hide_index=True, width='stretch', height=240)
+        st.download_button('Download all feedback (CSV)', df.to_csv(index=False).encode('utf-8'), 'feedback.csv', 'text/csv')
+        st.caption('Counted by kind: ' + ', '.join(f'{k} {v}' for k, v in df['category'].value_counts().items()))
+    else: st.caption('No feedback yet. Open a PDF below and add what a reviewer found.')
 if not runs: st.info('Nothing yet. Start a run on the Generate page.'); st.stop()
 
 f1, f2, f3, f4, f5 = st.columns([3, 2, 1.3, 1.2, 0.8], vertical_alignment='bottom')

@@ -5,6 +5,7 @@ Usage: python render_gate.py content.json out.pdf      (schema: prompts/gate/con
 """
 import json, sys
 from render_common import *
+from check_gate_level import key_formulas
 
 def fig_width(f):
     if not isinstance(f, dict): return None
@@ -46,10 +47,28 @@ def answer_line(q, label):
         ans = f"{ans} (accepted range {q['answer_range']})"
     return [Paragraph(f'<font name="Head" color="#4D2A87">{label}</font>  <b>Answer: {html.escape(str(ans))}</b>'
                       + (f'  <font color="#6B6480">({html.escape(q["source"])})</font>' if q.get('source') else ''), S['body'])] + \
-           ([P(x) for x in sol.split('\n\n')] if isinstance(sol, str) and sol else blocks(sol) if isinstance(sol, list) else []) + \
+           (steps(q['steps'], TW) if q.get('steps') else [P(x) for x in sol.split('\n\n')] if isinstance(sol, str) and sol else blocks(sol) if isinstance(sol, list) else []) + \
            ([image(q_figure(q, 'solution'), width=fig_width(q.get('solution_figure')))] if q_figure(q, 'solution') else []) + [Spacer(1, 4)]
 
 
+
+
+def revision_page(rev, notes, notes_no):
+    """One row per notes section (idea, key formula, rule to apply, trap), the flow from one idea to the next, and the
+    formula sheet: every key formula of the notes, by section."""
+    out = []
+    if rev.get('flow'):
+        out += [box([Paragraph('<font name="Head" color="#FFE100">How the ideas connect</font>', S['callout'])] +
+                    [Paragraph(f'{k}. ' + rich(x, color='#FFFFFF'), S['callout']) for k, x in enumerate(rev['flow'], 1)], bg=PURPLE, bar=YEL), Spacer(1, 8)]
+    rows = [[f"**{notes_no}.{k}** {r.get('section') or ''}\n{r.get('idea', '')}", f"${r['formula']}$" if r.get('formula') else '',
+             r.get('rule', ''), r.get('trap', '')] for k, r in enumerate(rev['rows'], 1)]
+    out += [styled_table(['Idea', 'Key formula', 'Apply it when', 'GATE trap'], rows), Spacer(1, 10)]
+    sheet = [(f'{notes_no}.{k}', n.get('heading', ''), f) for k, n in enumerate(notes, 1) for f in key_formulas(n)]
+    if sheet:
+        out.append(keep(Paragraph('Formula sheet', S['h2'])))
+        for num, head, latex in sheet:
+            out += [keep(Paragraph(f'<font color="#6B6480">{num} {html.escape(plain(head))}</font>', S['small']))] + formula_lines(latex, TW, 10)
+    return out
 
 
 def main():
@@ -94,7 +113,10 @@ def main():
 
     story = [NextPageTemplate('later')]
     kick = f"{paper} · {c.get('subject', '').upper()}"
-    head = [Paragraph(html.escape(kick), S['kicker']), Spacer(1, 6), Paragraph(rich(c['topic_name'], color='#FFFFFF'), S['title']),
+    for size in (26, 22, 19, 17):                   # a long title steps down in size instead of filling the cover
+        title = Paragraph(rich(c['topic_name'], color='#FFFFFF'), ParagraphStyle(f't{size}', parent=S['title'], fontSize=size, leading=size * 1.2))
+        if title.wrap(W - 2 * M - 6, H)[1] <= 3.2 * size * 1.2: break
+    head = [Paragraph(html.escape(kick), S['kicker']), Spacer(1, 6), title,
             Spacer(1, 6), Paragraph(rich(c.get('subtitle', 'Topic guide: concept notes, worked examples, previous-year GATE questions, practice and sample paper'), color='#FFFFFF'), S['sub'])]
     head_h = max(60 * mm, sum(p.wrap(W - 2 * M - 6, H)[1] for p in head) + 4 + 3 + 9 * mm)     # a long title or subtitle makes the purple band taller (cell padding 6 pt right, 4+3 pt; 9 mm for the yellow bar under the text)
     band = 20 * mm + head_h + 4 * mm
@@ -107,6 +129,8 @@ def main():
             yield b
             for k in ('problem', 'solution', 'blocks'):
                 if isinstance(b.get(k), list): yield from walk(b[k])
+            for st in b.get('steps') or []:
+                if isinstance(st, dict) and isinstance(st.get('blocks'), list): yield from walk(st['blocks'])
     allb = [b for s_ in c.get('notes', []) for b in walk(s_.get('blocks', []))]
     n_ex = sum(b.get('type') == 'example' for b in allb); n_fig = sum(b.get('type') == 'figure' for b in allb)
     parts = [f"Concept notes on {len(c.get('notes', []))} ideas" + (f" with {n_ex} worked examples" if n_ex else '') +
@@ -114,7 +138,8 @@ def main():
     if c.get('traps'): parts.append('common GATE traps')
     parts += ([f"{len(c['pyqs'])} previous-year questions"] if c.get('pyqs') else []) + [f"{len(c.get('practice', []))} practice questions",
               f"sample paper ({len(c.get('sample_paper', {}).get('questions', []))} Q)"]
-    meta = [['Subject', c.get('subject', '')], ['Syllabus line', c.get('syllabus_line', '')], ['In this PDF', ' · '.join(parts)]]
+    meta = [['Subject', c.get('subject', '')], ['Syllabus line', c.get('syllabus_line', '')]] + \
+           ([['Covers', '; '.join(c['subtopics'])]] if c.get('subtopics') else []) + [['In this PDF', ' · '.join(parts)]]
     mt = Table([[Paragraph(f'<font name="HeadM">{k}</font>', S['cell']), Paragraph(rich(v), S['cell'])] for k, v in meta],
                colWidths=[34 * mm, W - 2 * M - 34 * mm])
     mt.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 0.5, LINE), ('BACKGROUND', (0, 0), (0, -1), LAV),
@@ -134,10 +159,14 @@ def main():
     notes_no = sec
     for j, s_ in enumerate(c.get('notes', []), 1):
         num = f'{notes_no}.{j} ' if c.get('number_notes', True) else ''
+        figure_section(f'{notes_no}.{j}')
         story += [CondPageBreak(32 * mm), mark(Paragraph(num + rich(s_.get('heading', '')), S['h2']), 1, num + s_.get('heading', ''))] + blocks(s_.get('blocks', []))
+    figure_section(None)
     if c.get('traps'):
         story += h1('Common GATE traps') + blocks([{'type': 'bullets', 'items': c['traps']}])
-    if c.get('revision_card'):
+    if (c.get('revision') or {}).get('rows'):
+        story += h1('Revision card') + safely('The revision page', revision_page, c['revision'], c.get('notes', []), notes_no)
+    elif c.get('revision_card'):
         story += h1('Revision card') + [box([Paragraph('<font name="Head" color="#FFE100">Key points to remember</font>', S['callout'])] +
                                              [Paragraph('• ' + rich(x, color='#FFFFFF'), S['callout']) for x in c['revision_card']], bg=PURPLE, bar=YEL)]
     if c.get('pyqs'):

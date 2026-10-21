@@ -2,8 +2,9 @@
 import io, json, time
 import pandas as pd
 import streamlit as st
-import db, jobs, pyq
-from config import COST_CAP, DEFAULT_EFFORT, EFFORTS, MAX_TOPICS, MAX_URLS, MODEL, SCOPE_TOKEN_BUDGET, TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, cost
+import content as C, db, jobs, pyq
+from config import (COST_CAP, DEFAULT_EFFORT, EFFORTS, IMAGE_MODEL, ILLUSTRATIONS_PER_RUN, MAX_TOPICS, MAX_URLS, MODEL, SCOPE_TOKEN_BUDGET,
+                    TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, cost)
 from ui import user
 
 EFFORT_OUTPUT = {'low': 0.6, 'medium': 1.0, 'high': 1.8}      # rough share of the medium-level output (reasoning tokens are billed as output)
@@ -36,6 +37,9 @@ if book:
         c1, c2 = st.columns(2)
         start = c1.number_input('First page (printed page number)', 1, last, 1)
         end = c2.number_input('Last page', 1, last, last)
+reference = st.selectbox('Reference handbook (optional, GATE)', [None] + books, format_func=lambda b: 'None' if b is None else f"{b['title']} ({b['subject']})",
+                         help='A coaching handbook or standard text used only to check that the plan covers everything standard on the topic and '
+                              'uses the standard figures. Its text, examples and questions are never copied.') if mode == 'gate' else None
 default = book or {'paper': '', 'subject': ''}
 if st.session_state.get('subject_book') != (book and book['id']):          # a newly chosen book fills in its subject and paper
     st.session_state.subject_book = book and book['id']
@@ -56,13 +60,14 @@ def import_topics():
     try:
         df = pd.read_excel(s.topics_file, dtype=str).rename(columns=lambda c: str(c).strip().lower())
         sheet = [t.strip() for t in df['topic'].dropna() if t.strip()]
+        subs = {str(t).strip(): str(x).strip() for t, x in zip(df['topic'], df.get('subtopics', pd.Series([''] * len(df)))) if isinstance(t, str) and isinstance(x, str)}
     except Exception as e:
         s.import_msg = ('error', f'The sheet could not be read: it needs a column named Topic ({e}).'); return
     keep = [i for i in s.topic_ids if s.get(f'topic{i}', '').strip()]
     have = {s[f'topic{i}'].strip() for i in keep}
     new = [t for t in dict.fromkeys(sheet) if t not in have][:MAX_TOPICS - len(keep)]
     first = max(s.topic_ids) + 1
-    for k, t in enumerate(new): s[f'topic{first + k}'] = t
+    for k, t in enumerate(new): s[f'topic{first + k}'], s[f'sub{first + k}'] = t, subs.get(t, '')
     s.topic_ids = keep + list(range(first, first + len(new))) or [first]
     subjects = [x.strip() for x in df.get('subject', pd.Series(dtype=str)).dropna() if x.strip()]
     if subjects: s.subject = subjects[0]
@@ -70,14 +75,15 @@ def import_topics():
     s.import_msg = ('success', f'Added {len(new)} topic(s) from the sheet' + (f'; {skipped} skipped (already listed, or more than {MAX_TOPICS} in all).' if skipped else '.'))
 
 with st.expander('Import topics from an Excel sheet'):
-    st.caption('One row per topic, with the columns **Subject** and **Topic** (Subject is optional; the first one fills in the Subject field below).')
+    st.caption('One row per topic, with the columns **Subject**, **Topic** and **Subtopics** (Subject and Subtopics are optional; '
+               'the first subject fills in the Subject field below; subtopics are separated by commas).')
     c1, c2 = st.columns([3, 1], vertical_alignment='bottom')
     c1.file_uploader('Topics sheet (.xlsx)', type='xlsx', key='topics_file', on_change=import_topics)
     template = io.BytesIO()
-    pd.DataFrame(columns=['Subject', 'Topic']).to_excel(template, index=False)
+    pd.DataFrame(columns=['Subject', 'Topic', 'Subtopics']).to_excel(template, index=False)
     c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
     if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
-names, sources = [], {}          # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions
+names, sources, subtopics = [], {}, {}      # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions
 for k, i in enumerate(ids, 1):
     cols = st.columns([6, 3, 1] if mode == 'gate' else [9, 1], vertical_alignment='bottom')
     name = cols[0].text_input(f'Topic {k}', key=f'topic{i}', placeholder='e.g. Addressing modes and effective address').strip()
@@ -89,14 +95,20 @@ for k, i in enumerate(ids, 1):
         got = [u.strip() for u in st.text_area(f'Links for topic {k} (web pages or PDFs, one per line)', key=f'pyqurls{i}', height=68).splitlines() if u.strip()]
     elif kind:
         got = st.file_uploader(f'{kind} file(s) for topic {k}', type='pdf' if kind == 'PDF' else 'docx', accept_multiple_files=True, key=f'pyqfile{i}')
+    sub = st.text_input(f'Subtopics of topic {k} (optional)', key=f'sub{i}', placeholder='e.g. Buoyant force, Centre of buoyancy, Metacentric height',
+                        help='Comma-separated. Each one gets covered in the PDF; they are listed on the cover, not put in the title. '
+                             'A list in brackets at the end of the topic name is read as subtopics too.').strip()
+    name, subs = C.split_topic(name, sub)
+    if name and subs: st.caption(f'Title: **{name}** · covers {len(subs)} subtopic{"s" if len(subs) != 1 else ""}: ' + ', '.join(subs))
     if name and name not in names: names.append(name)
+    if name and subs: subtopics[name] = subs
     if name and got: sources.setdefault(name, (kind, got))
 topics = names
 st.button('＋ Add a topic', on_click=add_topic, disabled=len(ids) >= MAX_TOPICS)
 
 # 4. details
 st.subheader('4 · Details')
-options = {'topics': topics}
+options = {'topics': topics, 'subtopics': subtopics, 'reference_book': reference['id'] if reference else None}
 if mode == 'gate':
     c1, c2 = st.columns([1, 3])
     options['paper'] = c1.text_input('GATE paper code', key='paper', placeholder='CS').strip().upper()
@@ -106,6 +118,14 @@ if mode == 'gate':
                                   help="The writer re-solves every question and worked example, and flags examples, figures and "
                                        "questions that do not teach (one-line examples, decorative or mismatched figures, recall questions). Those go back to "
                                        "the writer once, with a note for you. Adds about $0.10-0.20 per PDF.")
+    options['visual_review'] = st.toggle('Visual review of figures and pages', value=False,
+                                         help='The model looks at every drawn figure (is it the right figure, technically correct, are its labels readable?) '
+                                              'and every finished page (empty space, overlapping or raw text). Wrong figures go back to the writer once; '
+                                              'page problems become notes. Adds a few cents per PDF.')
+    options['illustrations'] = st.toggle('Draw new illustrations when a topic needs one', value=False,
+                                         help=f"Pictures of machines and apparatus (an engine, a pump, a test rig) come from the Illustrations library. "
+                                              f"With this on, a concept that has no picture yet is drawn once ({IMAGE_MODEL['name']}, about ${IMAGE_MODEL['price']:.2f} each, "
+                                              f"at most {ILLUSTRATIONS_PER_RUN} per run) and waits on the Illustrations page: PDFs use it only after someone approves it.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()
     c1, c2 = st.columns(2)
@@ -124,6 +144,10 @@ calls, out_tokens = (4, 40_000) if mode == 'gate' else (2 + -(-n // 3), 9_000 * 
 estimate = 1.15 * cost(calls * (context + 15_000), out_tokens * EFFORT_OUTPUT[effort]) * (n if mode == 'gate' else 1)     # +15% for repairs
 if mode == 'gate' and options.get('verify'):
     estimate += n * (cost(25_000, 4_000) + cost(30_000, 10_000))      # the review, and fixing what it found
+if mode == 'gate' and options.get('visual_review'):
+    estimate += n * (5 * cost(15_000, 2_000) + cost(30_000, 8_000))      # figures and pages looked at in batches, and fixing what they found
+if mode == 'gate' and options.get('illustrations'):
+    estimate += ILLUSTRATIONS_PER_RUN * IMAGE_MODEL['price'] * 1.5      # at most this many new pictures per run, some drawn twice
 minutes = (-(-n // TOPIC_PARALLEL) * 10) if mode == 'gate' else 12
 
 errors = []

@@ -24,5 +24,6 @@ ui.require_access()      # after start(): the accounts live in the database
 st.navigation([st.Page('views/generate.py', title='Generate', icon='✨', default=True),
                st.Page('views/runs.py', title='Runs', icon='📄'),
                st.Page('views/library.py', title='Library', icon='📚'),
+               st.Page('views/illustrations.py', title='Illustrations', icon='🖼️'),
                st.Page('views/usage.py', title='Usage', icon='📊')]
               + ([st.Page('views/admin.py', title='Admin', icon='🔑')] if ui.is_admin() else [])).run()
