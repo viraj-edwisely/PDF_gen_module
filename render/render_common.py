@@ -266,7 +266,8 @@ class Box(Flowable):
         c = self.canv
         c.saveState(); c.setFillColor(self.bg); c.rect(0, 0, self.width, self.height, stroke=0, fill=1)
         if self.border: c.setStrokeColor(self.border); c.setLineWidth(0.8); c.rect(0, 0, self.width, self.height, stroke=1, fill=0)
-        c.setStrokeColor(self.bar); c.setLineWidth(3); c.line(1.5, 0, 1.5, self.height); c.restoreState()
+        if self.bar: c.setStrokeColor(self.bar); c.setLineWidth(3); c.line(1.5, 0, 1.5, self.height)
+        c.restoreState()
         y, last = self.height - self.pad, len(self.flows) - 1
         for k, (f, (w, h, _)) in enumerate(zip(self.flows, self.sizes)):
             y -= h + (f.getSpaceBefore() if k else 0)
@@ -422,8 +423,8 @@ def where_list(rows, avail):
     t = Table(data, colWidths=[w1, min(avail * 0.72, avail - 30) - w1])
     t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LINEBELOW', (0, 0), (-1, -2), 0.3, LINE),
                            ('TOPPADDING', (0, 0), (-1, -1), 1.5), ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5), ('LEFTPADDING', (0, 0), (-1, -1), 4)]))
-    t.hAlign = 'CENTER'
-    return [keep(Paragraph('<font color="#6B6480"><i>where</i></font>', ParagraphStyle('wh', parent=WHERE, alignment=TA_CENTER))), t]
+    t.hAlign = 'LEFT'                       # under the text, where the old "Here f is ..." lines were
+    return [Spacer(1, 3), keep(Paragraph('<font color="#6B6480"><i>where</i></font>', WHERE)), t]
 
 
 def formula(b, avail):
@@ -431,7 +432,7 @@ def formula(b, avail):
     if b.get('key'):
         inner = formula_lines(b['latex'], avail - 40, 12.5, '#2B1660')
         widest = max((i.drawWidth for i in inner if isinstance(i, Image)), default=avail)
-        framed = Box(inner, bg=colors.HexColor('#F7F5FC'), bar=YEL, pad=7, width=min(avail, widest + 60), border=PURPLE)
+        framed = Box(inner, bg=colors.HexColor('#F7F5FC'), bar=None, pad=7, width=min(avail, widest + 60), border=PURPLE)
         framed.hAlign = 'CENTER'
         out = [Spacer(1, 4), framed]
     else: out = [Spacer(1, 3)] + formula_lines(b['latex'], avail)
@@ -456,13 +457,13 @@ def steps(items, avail):
         if not blank(s.get('text')): out.append(P(s['text']))
         if not blank(s.get('latex')): out += [indent(f, avail) for f in formula_lines(s['latex'], avail - 20, 10.5, align='LEFT') if not isinstance(f, Spacer)]
         if not blank(s.get('result')): out.append(Paragraph('⇒ <b>' + rich(s['result']) + '</b>', ParagraphStyle('res', parent=S['body'], leftIndent=14)))
-        out += blocks(s.get('blocks') or [], avail)
+        out += blocks(s.get('blocks') or [], avail) + [Spacer(1, 4)]
     return out
 
 
 def answer_bar(text, avail):
     t = Table([[Paragraph('<font name="Head" color="#4D2A87">Answer</font>  ' + rich(text), S['body'])]], colWidths=[avail])
-    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFF6CC')), ('LINEBEFORE', (0, 0), (0, -1), 3, YEL),
+    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.white), ('LINEBEFORE', (0, 0), (0, -1), 3, PURPLE),
                            ('LEFTPADDING', (0, 0), (-1, -1), 8), ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4)]))
     return t
 
@@ -483,7 +484,7 @@ def example(b, avail):
     inner += steps(b['steps'], avail - 22) if b.get('steps') else text_or_blocks(b.get('solution'), avail - 22)
     if not blank(b.get('answer')): inner += [Spacer(1, 3), answer_bar(b['answer'], avail - 22)]
     if not blank(b.get('rushed')):
-        inner += [Spacer(1, 5), Box([keep(Paragraph('Why the rushed answer is wrong', S['boxtitle'])), P(b['rushed'])], bg=colors.white, bar=YEL, width=avail - 22)]
+        inner += [Spacer(1, 5), Box([keep(Paragraph('Why the rushed answer is wrong', S['boxtitle'])), P(b['rushed'])], bg=colors.white, bar=PURPLE, width=avail - 22)]
     return [box(inner, width=avail), Spacer(1, 8)]
 
 

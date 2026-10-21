@@ -57,7 +57,7 @@ def check(path):
         if t not in ('MCQ', 'MSQ', 'NAT'): E.append(f'{where}: qtype must be MCQ/MSQ/NAT (GATE has no other types)')
         if q.get('marks') not in (1, 2): E.append(f'{where}: marks must be 1 or 2')
         if not q.get('answer'): E.append(f'{where}: no answer')
-        if not q.get('solution'): E.append(f'{where}: no worked solution')
+        if not q.get('solution') and not q.get('steps'): E.append(f'{where}: no worked solution')     # steps are the worked solution
         if original and NON_GATE_STEMS.search(stem): E.append(f'{where}: descriptive/university-style stem ("{stem[:40]}...") - GATE asks only objective MCQ/MSQ/NAT')
         if t in ('MCQ', 'MSQ'):
             if len(q.get('options') or []) != 4: E.append(f'{where}: {t} needs exactly 4 options')

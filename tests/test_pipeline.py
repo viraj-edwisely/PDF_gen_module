@@ -49,7 +49,9 @@ def reply_for(user):
              'answer': '1.5 ms', 'rushed': 'Forgetting the arrival time gives 2 ms.', 'check': {'expr': '(0 + 3)/2', 'answer': '1.5'}},
             {'type': 'trap', 'text': 'Subtract the arrival time.'}]} for h in heads]}
     if 'Write all the questions' in user:
-        return {'practice': EX['practice'], 'sample_paper': EX['sample_paper'], 'traps': EX['traps']}
+        as_steps = lambda qs: [{**{k: v for k, v in q.items() if k != 'solution'}, 'steps': [{'say': 'Work it out', 'result': str(q.get('solution'))[:80]}]} for q in qs]
+        return {'practice': as_steps(EX['practice']), 'sample_paper': {**EX['sample_paper'], 'questions': as_steps(EX['sample_paper']['questions'])},
+                'traps': EX['traps']}           # questions written the current way: the working as "steps", no "solution"
     if 'Write the revision page' in user:
         return {'rows': [{'section': h, 'idea': 'one line', 'formula': 'WT = TAT - BT', 'rule': 'r', 'trap': 't'} for h in SECTIONS], 'flow': ['A -> B']}
     if 'checking the figures' in user or 'checking the layout' in user: return {'issues': []}
@@ -82,5 +84,7 @@ def test_gate_pipeline_end_to_end(fake):
     assert any(n for _, n in fake.calls if n), 'the visual review sent images'
     assert fake.quality and fake.quality['examples_with_steps'] == 4 and fake.quality['subtopics_covered'] == 2
     assert any(p.endswith('.pdf') for p in fake.files), fake.warnings
+    assert not [w for w in fake.warnings if 'left out' in w], fake.warnings          # questions solved in steps are kept
+    assert len(content['practice']) == len(EX['practice']) and all(q['steps'] for q in content['practice'])
     assert not [w for w in fake.warnings if 'raw maths' in w or 'could not be drawn' in w], fake.warnings
     assert not fake.quality['sections_without_figure'] and not [w for w in fake.warnings if 'asks for a figure' in w]    # figures inside steps count
