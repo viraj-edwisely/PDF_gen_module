@@ -719,7 +719,7 @@ META = re.compile(r'\b(schematic(ally)?|not (drawn )?to scale|drawn (at|as|in|wi
 
 
 def writing_problems(note, path, earlier=()):
-    """Plain, short writing (SME feedback: long, complicated paragraphs): paragraphs over about 80 words, sections far over
+    """Plain, short writing (SME feedback: long, complicated paragraphs): sentences over 32 words, paragraphs over about 80 words, sections far over
     their word budget, sentences about how a figure is drawn, and key formulas repeated from an earlier section."""
     out, prose = [], 0
     for j, b in enumerate(note.get('blocks', [])):
@@ -729,6 +729,10 @@ def writing_problems(note, path, earlier=()):
         for t in texts:
             words = len(re.sub(r'\$[^$]*\$', 'x', str(t)).split())
             prose += words if b.get('type') == 'para' else 0
+            longest = max((x for x in re.split(r'(?<=[.;:?!])\s+', re.sub(r'\$[^$]*\$', 'x', str(t)))), key=lambda x: len(x.split()), default='')
+            if len(longest.split()) > 32:
+                out.append((path + ('blocks', j), f'this sentence has {len(longest.split())} words ("{" ".join(longest.split()[:8])} ..."): '
+                            'split it, one idea per sentence, conditions as bullets', False))
             if b.get('type') == 'para' and words > 85:
                 out.append((path + ('blocks', j), f'this paragraph has {words} words: split it into short paragraphs (at most three sentences each) or bullets', False))
             if META.search(str(t)):

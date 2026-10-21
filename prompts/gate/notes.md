@@ -36,8 +36,15 @@ For EACH section write, in this order:
    numbers match the text; a figure inside an example uses that example's own values.
 8. A "trap" block where GATE sets a trap (sign, convention, tie-breaking, units, boundary cases).
 
-Write simply:
-- Short sentences (about 25 words at most); at most three sentences per paragraph; bullets for lists of conditions.
+Write simply, as a good teacher talks to a student at the board:
+- Short sentences (about 20 words; never over 30); at most three sentences per paragraph; bullets for lists of conditions.
+- One idea per sentence. Concrete before abstract: say what happens to the thing, then name the rule. Active voice.
+- Put conditions as a short bullet list after "This holds when:", never stacked inside one sentence.
+- No hedges or textbook padding ("in the usual construction", "when needed", "particularly", "by construction",
+  "it should be noted"). Use the everyday word when one exists.
+  Not: "The height relation applies when the top's radial distance and its displacement relative to the base image are
+  measured from the principal point on a vertical photograph."
+  But: "Measure both distances from the principal point: r to the image of the top, d from the base image to the top image."
 - About 250-400 words of prose per section (examples, formulas and tables not counted). Say each thing once.
 - A "callout" for the one rule of the section a student must not forget (at most one per section).
 - Tables for comparisons, with at most 4 columns (turn a wider comparison: items as rows).

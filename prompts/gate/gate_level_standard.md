@@ -50,8 +50,9 @@ subtopic of the syllabus line (and every subtopic the user lists) gets its own s
    steps with the intermediate values, the figure a topper would draw, and the rushed answer that is wrong.
 5. **A trap box** where GATE has set a trap before (sign/convention, tie-breaking, units, boundary cases).
 
-Write simply: short sentences (about 25 words at most), at most three sentences per paragraph, bullets for lists of
-conditions, no restating, and about 250-400 words of prose per section (examples, formulas and tables not counted).
+Write simply: short sentences (about 20 words, never over 30), one idea per sentence, concrete before abstract,
+conditions as bullets rather than stacked in a sentence, no hedges or textbook padding, at most three sentences per
+paragraph, no restating, and about 250-400 words of prose per section (examples, formulas and tables not counted).
 
 Topic-level additions: "What you will learn" (3-5 verb-first outcomes), prerequisites by name, a
 **comparison section** when the topic has several methods ("one problem, every method"), a **Common

@@ -3,6 +3,7 @@ bearings, plates with holes, free-body and force diagrams, trusses, velocity tri
 (upright or tilted), constellations. Its exact spec is the docstring of geometry(): figures.reference() gives it to the
 model."""
 import numpy as np
+import matplotlib.colors
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Arc, FancyArrowPatch, PathPatch
 from matplotlib.path import Path
@@ -52,9 +53,17 @@ def geometry(spec, out):
     weight and buoyancy as arrows), a gate with its depth (depth_down), free-body diagrams, trusses, velocity triangles."""
     brand()
     fig, ax = plt.subplots(figsize=_size(spec))
-    notes, k = [], 0
-    def label(text, xy, offset=(6, 6), size=8.5, color=INK):
-        if text: notes.append(ax.annotate(str(text), tuple(map(float, xy)), textcoords='offset points', xytext=offset, fontsize=size, color=color))
+    notes, k, shapes = [], 0, []
+    flip = -1 if spec.get('depth_down') else 1
+    def label(text, xy, offset=(6, 6), size=8.5, color=INK, prefer=()):
+        if not text: return
+        notes.append(ax.annotate(str(text), tuple(map(float, xy)), textcoords='offset points', xytext=offset, fontsize=size, color=color))
+        notes[-1].prefer = prefer
+    def beside(a, b, first=None):
+        """Offsets (points) to either side of a line from a to b, nearest first; `first` is the side tried first."""
+        d = (b - a) * [1, flip]; n = np.array([-d[1], d[0]]) / (np.linalg.norm(d) or 1)
+        if first is not None and np.dot(n, np.asarray(first, float) * [1, flip]) < 0: n = -n
+        return [tuple(np.round(sgn * n * r, 1)) for r in (7, 14, 24, 36) for sgn in (1, -1)]
     for it in spec.get('items', []):
         t = it.get('type')
         c = col(it.get('color'), PURPLE)
@@ -64,7 +73,7 @@ def geometry(spec, out):
             a, b = np.asarray(it['from'], float), np.asarray(it['to'], float)
             if t == 'segment': ax.plot(*zip(a, b), ls=it.get('style', '-'), color=c, lw=it.get('lw', 1.6))
             else: ax.add_patch(FancyArrowPatch(a, b, arrowstyle='-|>', mutation_scale=14, color=col(it.get('color'), PALETTE[2]), lw=2, zorder=5))
-            label(it.get('label'), (a + b) / 2, (6, 4))
+            label(it.get('label'), (a + b) / 2, beside(a, b)[0], prefer=beside(a, b))
         elif t in ('polygon', 'rect'):
             pts = _shape_points(it)
             verts, codes = list(pts) + [pts[0]], [Path.MOVETO] + [Path.LINETO] * (len(pts) - 1) + [Path.CLOSEPOLY]
@@ -72,8 +81,13 @@ def geometry(spec, out):
                 h = _rot(hole, it.get('rotate', 0), np.asarray(it.get('about', np.mean(pts, axis=0)), float))[::-1]
                 verts += list(h) + [h[0]]; codes += [Path.MOVETO] + [Path.LINETO] * (len(h) - 1) + [Path.CLOSEPOLY]
             fill = it.get('fill', 'lav')
-            ax.add_patch(PathPatch(Path(verts, codes), facecolor=col(fill) if fill else 'none', edgecolor=c, lw=1.6, alpha=1, zorder=2))
-            label(it.get('label'), pts.mean(axis=0), (0, 0))
+            ax.add_patch(PathPatch(Path(verts, codes), facecolor=(*matplotlib.colors.to_rgb(col(fill)), 0.45) if fill else 'none',
+                                   edgecolor=c, lw=1.6, zorder=2))        # translucent: where shapes overlap, the overlap shows
+            if it.get('label'):                         # inside its own shape: the centre, else towards a corner
+                m = pts.mean(axis=0)
+                notes.append(ax.annotate(str(it['label']), tuple(m), xytext=tuple(m), fontsize=8.5, color=INK, ha='center', va='center'))
+                notes[-1].spots = [m + f * (v - m) for f in (0.5, 0.7) for v in pts] + [m + 0.6 * ((u + v) / 2 - m) for u, v in zip(pts, np.roll(pts, 1, axis=0))]
+                shapes.append((notes[-1], Path(verts, codes)))
         elif t == 'circle':
             fill = it.get('fill')
             ax.add_patch(Circle(it['center'], float(it['r']), facecolor=col(fill) if fill else 'white', edgecolor=c, lw=1.6, zorder=3))
@@ -88,12 +102,13 @@ def geometry(spec, out):
             n = np.array([-(b - a)[1], (b - a)[0]]); n = n / (np.linalg.norm(n) or 1) * float(it.get('offset', 0))
             ax.annotate('', a + n, xytext=b + n, arrowprops=dict(arrowstyle='<->', color=GREY, lw=0.9))
             for p in (a, b): ax.plot(*zip(p, p + 1.15 * n), color=GREY, lw=0.6)
-            label(it.get('label'), (a + b) / 2 + n, (0, 4), 8, INK)
+            side = beside(a, b, n if np.any(n) else None)
+            label(it.get('label'), (a + b) / 2 + n, side[0], 8, INK, prefer=side)
         elif t == 'bearing':
             a = np.asarray(it['from'], float); th = np.radians(float(it['bearing']))
             b = a + float(it.get('length', 1)) * np.array([np.sin(th), np.cos(th)])          # clockwise from north
             ax.add_patch(FancyArrowPatch(a, b, arrowstyle='-|>', mutation_scale=14, color=PALETTE[(k := k + 1) % len(PALETTE)], lw=1.8, zorder=4))
-            label(it.get('label'), (a + b) / 2, (6, 4))
+            label(it.get('label'), (a + b) / 2, beside(a, b)[0], prefer=beside(a, b))
             if it.get('to_label'): ax.plot(*b, 'o', color=PURPLE, ms=4, zorder=6); label(it['to_label'], b, (5, 5), 9, PURPLE)
         elif t == 'surface':
             x1, x2 = it.get('x', [None, None]); y = float(it.get('y', 0))
@@ -120,5 +135,8 @@ def geometry(spec, out):
                     arrowprops=dict(arrowstyle='-|>', color=INK, lw=1.2))
     if spec.get('title'): ax.set_title(spec['title'])
     ax.margins(0.08)
+    for t, path in shapes:          # a shape's label goes where no other shape covers it, so it cannot be read as the other's
+        spots = sorted([np.array(t.xy)] + t.spots, key=lambda q: sum(o.contains_point(q) for u, o in shapes if u is not t))
+        t.xyann, t.spots = tuple(spots[0]), spots[1:]
     ISSUES.append(LBL.place(fig, ax, notes))
     return save(fig, out)

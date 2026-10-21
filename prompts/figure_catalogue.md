@@ -8,6 +8,9 @@ that it draws. A figure that cannot be drawn, or whose labels still collide, is 
 - "kind" is one of the kinds in the reference below. "spec" follows that kind's spec EXACTLY: field names, list shapes, value types.
 - In a question: "figure": {"kind": ..., "spec": ...}; in the answer key: "solution_figure": {...}.
 - The caption says what the student reads off the figure (a value, a crossing, a direction), in one sentence.
+- Labels are short: a symbol, a value or 1 to 4 words ("O", "H = 1800 m", "top image"). Never a sentence in a label:
+  explanations go in the caption. Label only what the text or the example uses; a figure with 4 clear labels beats one
+  with 12.
 - Never write sentences about how a figure is drawn ("schematic", "drawn at separate positions", "not to scale" is added by
   the app where needed). A figure that needs an apology is the wrong figure: choose the right kind instead.
 
@@ -27,6 +30,10 @@ that it draws. A figure that cannot be drawn, or whose labels still collide, is 
    shaper, a casting mould and its gating, a welding set-up, a metacentric-height apparatus, a waveguide, a dish antenna).
    Never for anything with values, scales, graphs, circuits or block diagrams. Use a stable "concept" key
    (four_stroke_si_engine) so every PDF gets the same approved picture, and name every numbered part in "parts".
+plot is only for a graph: both axes are real quantities with units, and the student reads a value off a curve. Anything
+you would sketch on the board (a camera and its rays, a photograph and the ground, footprints, a tank, a body, a beam
+of light, a layout) is geometry, with no axes, and dim items for the lengths. A plot whose axes would be "schematic", or
+whose points all lie on one line, is the wrong kind and is sent back.
 Never draw a physical body or a signal chain with plot or graph, never a spectrum or waveform with graph, and never put
 two signals on one set of axes when the student must compare them: use stacked "panels" (plot) or waveform.
 
@@ -51,7 +58,11 @@ Use the figure a textbook uses: students recognise it and SMEs expect it.
 - Thermodynamic cycles: cycle (Otto, Diesel, Dual, Brayton on p-v and T-s; Rankine on T-s with the dome; vapour
   compression on p-h and T-s). Processes of a closed system: cycle or plot of the p-V path with the work area filled.
 - Mechanisms, kinematics, velocity triangles (turbines, pumps): geometry. Vibration responses: plot.
-- Surveying: geometry with bearing items and "north": true. Soil mechanics curves (grading, consolidation): plot ("logx").
+- Surveying: geometry with bearing items and "north": true. Photogrammetry: geometry - the camera station O, the photo
+  plane as a short segment at distance f, rays to the ground as dashed segments, the ground and datum, with H, h and f
+  as dims; relief displacement with the principal point, the base and top images and d as a dim; stereo pairs with
+  both stations, the air base B as a dim and the rays to G and T; overlap as translucent rects (one per photograph)
+  with the advance a and strip spacing b as dims. Soil mechanics curves (grading, consolidation): plot ("logx").
 - Project networks: graph with the critical path highlighted. Construction schedules: gantt.
 
 **CS / DA**

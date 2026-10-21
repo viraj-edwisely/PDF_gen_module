@@ -174,3 +174,19 @@ def test_long_paragraphs_figure_apologies_and_repeated_formulas_are_flagged():
     msgs = [m for _, m, _ in C.writing_problems(note, ('notes', 1), {C._key('F_B = \rho g V')})]
     assert any('90 words' in m for m in msgs) and any('schematic' in m for m in msgs) and any('repeats' in m for m in msgs)
     assert C.writing_problems({'heading': 'S', 'blocks': ['Short and plain.']}, ('notes', 0)) == []
+
+
+def test_a_sketch_drawn_as_a_graph_is_sent_back():
+    import check_content as K
+    assert 'geometry' in K.misuse('plot', {'xlabel': 'Horizontal position (schematic)', 'curves': [{'x': [0, 1], 'y': [1, 0]}]})
+    assert 'geometry' in K.misuse('plot', {'curves': [{'x': [0, 84], 'y': [0, 0]}], 'points': [{'x': 90, 'y': 0, 'label': 'Top image'}]})
+    assert 'too long' in K.misuse('geometry', {'items': [{'type': 'point', 'at': [0, 0], 'label': 'Higher-terrain image segment is longer'}]})
+    assert K.misuse('plot', {'xlabel': 'x (m)', 'curves': [{'expr': 'x**2', 'range': [0, 1]}]}) == ''
+
+
+def test_a_long_stacked_sentence_is_sent_back():
+    note = {'blocks': [{'type': 'para', 'text': 'The height relation applies when the top radial distance and its displacement relative to '
+                        'the base image are measured from the principal point on a vertical photograph taken with $f$ known and '
+                        'tilt neglected throughout.'}]}
+    assert any('one idea per sentence' in m for _, m, _ in C.writing_problems(note, ('notes', 0)))
+    assert not C.writing_problems({'blocks': [{'type': 'para', 'text': 'Measure both distances from the principal point. Keep units the same.'}]}, ('notes', 0))

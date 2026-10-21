@@ -30,6 +30,33 @@ SME_FIGURES = [
                    {'ylabel': 's(t)', 'curves': [{'expr': '(1 + 0.5*cos(2*pi*x))*cos(2*pi*20*x)', 'range': [0, 2], 'label': 'AM wave, μ = 0.5'},
                                                  {'expr': '1 + 0.5*cos(2*pi*x)', 'range': [0, 2], 'style': '--', 'label': 'envelope'},
                                                  {'expr': '-(1 + 0.5*cos(2*pi*x))', 'range': [0, 2], 'style': '--', 'label': 'envelope'}]}]}),
+    ('stereo pair: T1/G1 and T2/G2 labels on each other, arrows across the plot (Aerial Survey p.8)', 'plot', {
+        'xlabel': 'Flight baseline (m)', 'ylabel': 'Height (m)',
+        'curves': [{'x': [0, 5], 'y': [8, 0]}, {'x': [0, 5], 'y': [8, 2]}, {'x': [10, 5], 'y': [8, 2]}, {'x': [10, 5], 'y': [8, 0]}],
+        'points': [{'x': 0, 'y': 8, 'label': 'O1'}, {'x': 10, 'y': 8, 'label': 'O2'}, {'x': 5, 'y': 0, 'label': 'G'}, {'x': 5, 'y': 2, 'label': 'T'},
+                   {'x': 0.8, 'y': 7.6, 'label': 'T1'}, {'x': 0.8, 'y': 7.2, 'label': 'G1'}, {'x': 9.2, 'y': 7.6, 'label': 'T2'}, {'x': 9.2, 'y': 7.2, 'label': 'G2'}],
+        'annotations': [{'xy': [0.8, 7.2], 'text': 'left photo', 'xytext': [0.2, 6]}, {'xy': [9.2, 7.6], 'text': 'right photo', 'xytext': [7, 9]},
+                        {'xy': [5, 2], 'text': 'pT = 54.0 mm', 'xytext': [5.4, 2.6]}, {'xy': [5, 0], 'text': 'pG = 52.5 mm', 'xytext': [5.4, -0.3]}]}),
+    ('photo overlap: labels on the footprint edges (Aerial Survey p.6)', 'plot', {
+        'xlabel': 'Along flight (km)', 'ylabel': 'Across flight (km)', 'grid': True,
+        'curves': [{'x': [0, 2.4, 2.4, 0, 0], 'y': [0, 0, 2, 2, 0]}, {'x': [0.96, 3.36, 3.36, 0.96, 0.96], 'y': [0, 0, 2, 2, 0]},
+                   {'x': [0, 2.4, 2.4, 0, 0], 'y': [1.4, 1.4, 3.4, 3.4, 1.4]}],
+        'annotations': [{'xy': [0.5, 0.2], 'text': 'Usable advance: 0.96 km', 'xytext': [0.1, 0.4]}, {'xy': [1.3, 1.0], 'text': 'Forward overlap: 60%', 'xytext': [1.4, 0.7]},
+                        {'xy': [0.2, 1.9], 'text': 'Strip spacing: 1.40 km', 'xytext': [0.15, 2.1]}, {'xy': [1.2, 1.7], 'text': 'Side overlap: 30%', 'xytext': [1.5, 2.5]}]}),
+    ('stereo pair as geometry, the way the catalogue asks for it (Aerial Survey p.8)', 'geometry', {'items': [
+        {'type': 'segment', 'from': [-1, 0], 'to': [11, 0], 'label': 'datum'}, {'type': 'segment', 'from': [5, 0], 'to': [5, 2], 'lw': 4},
+        {'type': 'point', 'at': [0, 8], 'label': 'O1'}, {'type': 'point', 'at': [10, 8], 'label': 'O2'},
+        {'type': 'dim', 'from': [0, 9], 'to': [10, 9], 'label': 'B = 620 m'},
+        {'type': 'segment', 'from': [-0.8, 7.2], 'to': [0.8, 7.2], 'label': 'left photo'}, {'type': 'segment', 'from': [9.2, 7.2], 'to': [10.8, 7.2], 'label': 'right photo'},
+        {'type': 'segment', 'from': [0, 8], 'to': [5, 0], 'style': '--'}, {'type': 'segment', 'from': [0, 8], 'to': [5, 2], 'style': '--'},
+        {'type': 'segment', 'from': [10, 8], 'to': [5, 0], 'style': '--'}, {'type': 'segment', 'from': [10, 8], 'to': [5, 2], 'style': '--'},
+        {'type': 'point', 'at': [5, 0], 'label': 'G'}, {'type': 'point', 'at': [5, 2], 'label': 'T'},
+        {'type': 'dim', 'from': [11.5, 0], 'to': [11.5, 8], 'label': 'H = 1800 m'}]}),
+    ('photo overlap as geometry: dims for a and b, translucent footprints (Aerial Survey p.6)', 'geometry', {'items': [
+        {'type': 'rect', 'at': [0, 0], 'w': 2.4, 'h': 2.0, 'label': '1'}, {'type': 'rect', 'at': [0.96, 0], 'w': 2.4, 'h': 2.0, 'label': '2'},
+        {'type': 'rect', 'at': [0, 1.4], 'w': 2.4, 'h': 2.0, 'label': '3'},
+        {'type': 'dim', 'from': [0, -0.4], 'to': [0.96, -0.4], 'label': 'a = 0.96 km'}, {'type': 'dim', 'from': [-0.4, 0], 'to': [-0.4, 1.4], 'label': 'b = 1.40 km'},
+        {'type': 'arrow', 'from': [2.6, -0.4], 'to': [3.4, -0.4], 'label': 'flight'}]}),
 ]
 
 TOO_FAST = ('plot', {'curves': [{'expr': 'cos(2*pi*1e6*x)', 'range': [0, 0.002]}]})      # 2000 carrier cycles: refused, not aliased
