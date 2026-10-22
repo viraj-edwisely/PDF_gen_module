@@ -4,7 +4,6 @@ Each kind's exact spec is its docstring: figures.reference() gives it to the mod
 import io, re
 from figstyle import PURPLE, INK, GREY, DPI, ISSUES, brand
 import labels as LBL
-from marks import mark_parts
 
 BLOCKS = {'box': 'Box', 'mixer': 'Mixer', 'sum': 'Sum', 'osc': 'Oscillator', 'oscillator': 'Oscillator', 'filter': 'Filter',
           'amp': 'Amp', 'antenna': 'Antenna', 'adc': 'Adc', 'dac': 'Dac', 'speaker': 'Speaker', 'square': 'Square', 'demod': 'Demod'}
@@ -201,19 +200,18 @@ def illustration(spec, out):
     """spec: {"concept": "four_stroke_si_engine" (a short key: one concept, one picture, reused by every PDF),
               "title": "Four-stroke SI engine", "description": "what the picture shows, for the illustrator: the view, the
               state and the parts (e.g. a cut-away of one cylinder during the intake stroke, inlet valve open, piston moving down)",
-              "parts": ["Piston", "Inlet valve", "Exhaust valve", "Spark plug"] (numbered 1, 2, 3 ... on the picture, in this order)}
+              "parts": ["Piston", "Inlet valve", "Exhaust valve", "Spark plug"] (the image model numbers them 1, 2, 3 ... on the picture, in this order)}
     A picture for what a student must recognise rather than read values from: real apparatus and cut-aways (an IC
     engine, a centrifugal pump, a Pelton wheel, a lathe, a casting mould, a test rig, tray types, a heat-exchanger cut-away).
     Never for flowsheets, graphs, diagrams with numbers, circuits or anything drawn to scale. The app takes it from its library; a new
-    concept is drawn once (only when the run allows new pictures) and the app puts the numbered markers on it. Until a person approves
-    it, the picture carries an "Unreviewed" tag."""
+    concept is drawn once (only when the run allows new pictures), with no check or redraw. Until a person approves it, the
+    picture carries an "Unreviewed" tag."""
     import matplotlib.pyplot as plt
     from PIL import Image as PI
     from figstyle import save
     if not spec.get('file'): raise ValueError(f'the illustration "{spec.get("concept")}" is not approved yet')
     brand()
     im = PI.open(spec['file'])
-    if spec.get('marks'): im = mark_parts(im, spec['marks'])
     parts = [str(p) for p in spec.get('parts', [])]
     rows = -(-len(parts) // 2)
     w = 6.2; h = w * im.height / im.width

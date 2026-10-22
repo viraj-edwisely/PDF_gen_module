@@ -54,7 +54,7 @@ python tests/stress_pdf.py stress.pdf    # after a renderer change: every formul
   `python tools/eval.py score NAME` scores them (quality report, the app's checks, and a judge rubric with the SME criteria),
   `python tools/eval.py compare A B` shows what changed. A prompt change ships only if no criterion gets worse.
 - Options on the Generate page: **Visual review of figures and pages** (the model looks at every drawn figure and page; wrong
-  figures go back to the writer once) and **Draw new illustrations** (GPT Image, once per concept, approved on the
+  figures go back to the writer once) and **Draw new illustrations** (GPT Image, once per concept, one call, no check or redraw, approved on the
   Illustrations page before use; the model ID and price are in `config.py`: confirm the price before switching it on).
 
 ## How it works (short)

@@ -6,13 +6,12 @@ illustration library (pictures of machines and apparatus, generated once per con
 - drop_bad_figures(): figures whose labels still collide, or that are the wrong kind of figure, are left out.
 - pages():   the finished pages; what looks wrong becomes a note on the Runs page.
 - illustrations(): "illustration" figures take their picture from the library; a concept not in it is (when the run allows it)
-  drawn once and checked by the model, which also says where each named part is. A picture waiting for approval is used with an
-  "Unreviewed" tag; a rejected one is left out.
+  drawn once (one image call, no check, no redraw), numbered by the image model itself. A picture waiting for approval is used
+  with an "Unreviewed" tag; a rejected one is left out.
 """
 import json, os, re, subprocess, sys, tempfile
 import content as C, db, llm
 from config import ILLUSTRATIONS_PER_RUN
-from marks import clean as marks_clean      # noqa: E402  (the render folder is on the path through content)
 
 RENDER = C.RENDER
 BATCH_FIGURES, BATCH_PAGES = 6, 8
@@ -136,42 +135,20 @@ def prompt(spec):
     parts = [str(p) for p in spec.get('parts', [])]
     return ('Flat technical illustration for an engineering textbook: white background, clean vector line style, purple (#4D2A87) '
             f"and gold (#D9A400) accents, neutral greys. Subject: {spec.get('title') or spec.get('concept')}. {spec.get('description', '')} "
-            'Show these parts clearly and separately, with space around each so a marker can sit on it: ' + '; '.join(parts) +
-            '. No words, letters, numbers, labels or arrows anywhere. No watermark, no border.')
-
-
-def inspect(job, spec, png, usage):
-    """The model looks at a new illustration. Returns (problem or None, marks): where each named part is, as {"x", "y"} fractions of the picture."""
-    parts = [str(p) for p in spec.get('parts', [])]
-    try:
-        out, u, _ = llm.generate_json(job.system, _fill(_read('gate/illustration_check.md'), TITLE=spec.get('title') or spec.get('concept'),
-                                                        DESCRIPTION=spec.get('description', ''), PARTS='; '.join(parts)), 4000, job.effort, [png])
-    except llm.LLMError as e: return f'it could not be checked ({str(e)[:100]})', []
-    for k in usage: usage[k] += u.get(k, 0)
-    marks = marks_clean(out.get('marks'), len(parts))
-    problem = None if out.get('ok') else str(out.get('problem') or 'not as described')[:300]
-    hidden = [p for p, m in zip(parts, marks) if m is None]
-    return problem or (f"these parts cannot be seen: {', '.join(hidden)}" if hidden else None), marks
+            'Show these parts clearly and separately, each marked with its number in a small circle joined to the part by a thin leader line, '
+            'numbered in this order: ' + '; '.join(f'{k}. {p}' for k, p in enumerate(parts, 1)) +
+            '. The numbers are the only text: no names, titles or captions. No watermark, no border.')
 
 
 def new_picture(job, spec, k):
-    """Draw a concept once (and once more if the check finds a problem), store it with the places of its parts. It is kept as pending
-    (PDFs show it with an "Unreviewed" tag until a person approves it) or, if it still fails the check, as rejected. Returns the problem or None."""
-    usage = {'in': 0, 'out': 0, 'cost': 0.0}
-    text, problem, png, marks = prompt(spec), None, None, []
-    for attempt in range(2):
-        png, price = llm.generate_image(text if not problem else text + f' Correct this: {problem}')
-        usage['cost'] += price
-        problem, marks = inspect(job, spec, png, usage)
-        if not problem: break
+    """Draw a concept once and store it as pending: PDFs show it with an "Unreviewed" tag until a person approves it."""
+    png, price = llm.generate_image(prompt(spec))
     path = f'{k}.png'
     db.upload('illustrations', path, png, 'image/png')
-    db.sql("insert into illustrations (concept, title, description, parts, marks, path, status, review, created_by) values (%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s) "
-           "on conflict (concept) do update set path=excluded.path, marks=excluded.marks, parts=excluded.parts, status=excluded.status, review=excluded.review",
-           (k, spec.get('title'), spec.get('description'), json.dumps(spec.get('parts', [])), json.dumps(marks), path, 'pending' if not problem else 'rejected',
-            problem or 'The model found no problem.', job.run['created_by']))
-    job.charge(usage, f'illustration {k}')
-    return problem
+    db.sql("insert into illustrations (concept, title, description, parts, path, status, review, created_by) values (%s,%s,%s,%s::jsonb,%s,'pending','',%s) "
+           "on conflict (concept) do update set path=excluded.path, parts=excluded.parts, status='pending', review=''",
+           (k, spec.get('title'), spec.get('description'), json.dumps(spec.get('parts', [])), path, job.run['created_by']))
+    job.charge({'in': 0, 'out': 0, 'cost': price}, f'illustration {k}')
 
 
 def illustrations(job, content, allow_new):
@@ -186,16 +163,15 @@ def illustrations(job, content, allow_new):
         row = db.sql('select * from illustrations where concept=%s', (k,)) if k else []
         if k and not row and allow_new and made < ILLUSTRATIONS_PER_RUN:
             made += 1
-            try: problem = new_picture(job, spec, k)
+            try: new_picture(job, spec, k)
             except Exception as e: job.warn(f'The illustration "{k}" could not be drawn ({str(e)[:120]}).'); drop.append(path); continue
             row = db.sql('select * from illustrations where concept=%s', (k,))
-            job.warn(f'New illustration "{k}" drawn' + (f', but the check found: {problem}. It was not used.' if problem else ' and waiting for approval on the Illustrations page.'))
+            job.warn(f'New illustration "{k}" drawn and waiting for approval on the Illustrations page.')
         r = row[0] if row else None
         if r and r['status'] in ('approved', 'pending'):
             spec['file'] = os.path.join(folder, k + '.png')
             open(spec['file'], 'wb').write(db.download('illustrations', r['path']))
-            if r.get('marks'): spec['parts'], spec['marks'] = r['parts'] or [], r['marks']          # numbers drawn by the app on the places found for the parts
-            else: spec.setdefault('parts', r['parts'] or [])                                           # older pictures carry their numbers
+            spec['parts'] = r['parts'] or []
             spec['unreviewed'] = r['status'] == 'pending'
             if spec['unreviewed']: job.warn(f'Illustration "{k}" is not approved yet: this PDF shows it with an "Unreviewed" tag. Approve it on the Illustrations page and regenerate to remove the tag.')
             continue

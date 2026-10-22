@@ -140,7 +140,7 @@ if mode == 'gate':
     options['illustrations'] = st.toggle('Draw new illustrations when a topic needs one', value=False,
                                          help=f"Pictures of real apparatus (an engine, a pump, tray types, a heat-exchanger cut-away) come from the Illustrations library: the writer is shown "
                                               f"what is in it and uses it whatever this setting. With this on, the writer may also ask for new ones: each is drawn once ({IMAGE_MODEL['name']}, "
-                                              f"about ${IMAGE_MODEL['price']:.2f} each, at most {ILLUSTRATIONS_PER_RUN} per run), checked by the model, numbered by the app and used in this PDF at once "
+                                              f"about ${IMAGE_MODEL['price']:.2f} each, at most {ILLUSTRATIONS_PER_RUN} per run, no check or redraw) and used in this PDF at once "
                                               f"with an 'Unreviewed' tag, until someone approves it on the Illustrations page and the PDF is regenerated.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()

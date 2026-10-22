@@ -30,7 +30,7 @@ that it draws. A figure that cannot be drawn, or whose labels still collide, is 
    draw (a four-stroke engine, a centrifugal pump, a Pelton wheel, a Francis turbine, a lathe, a shaper, a casting mould and its gating,
    a welding set-up, a metacentric-height apparatus, tray types in a column, a heat-exchanger cut-away, a waveguide, a dish antenna).
    Never for flowsheets (process), graphs, circuits, block diagrams or anything with values or scales. Use a stable "concept" key
-   (four_stroke_si_engine) so every PDF gets the same picture, name every part in "parts" (the app draws the numbers on it), and look
+   (four_stroke_si_engine) so every PDF gets the same picture, name every part in "parts" (the image model numbers them on the picture), and look
    at the illustration library listed in the section prompt first: reuse a listed concept before asking for a new one, and ask for a
    new one only when the prompt says new pictures are allowed.
 A plot shows the behaviour the student must see, so choose its range for that: a function with a singularity or a pole (1/x, ln x, tan x)
