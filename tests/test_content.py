@@ -190,3 +190,25 @@ def test_a_long_stacked_sentence_is_sent_back():
                         'tilt neglected throughout.'}]}
     assert any('one idea per sentence' in m for _, m, _ in C.writing_problems(note, ('notes', 0)))
     assert not C.writing_problems({'blocks': [{'type': 'para', 'text': 'Measure both distances from the principal point. Keep units the same.'}]}, ('notes', 0))
+
+
+def test_numbers_the_writer_puts_in_headings_are_removed():
+    """The PDF numbers sections itself: "2.1 Flash" printed as "2.1 2.1 Flash" (seen in an ME PDF)."""
+    assert [C.unnumber(h) for h in ('2.1 One-sided limits', '2.10. Limits', '3. Traps', '4) Revision', '3D printing', '2 Stage compressor', 'Limits at 2.5 m')] == \
+        ['One-sided limits', 'Limits', 'Traps', 'Revision', '3D printing', '2 Stage compressor', 'Limits at 2.5 m']
+    plan = C.gate_plan({'sections': [{'heading': '2.1 Flash distillation'}, {'title': '2.2 Differential'}], 'coverage': [{'subtopic': 'x', 'section': '2.1 Flash distillation'}]})
+    assert [s['heading'] for s in plan['sections']] == ['Flash distillation', 'Differential'] and plan['coverage'][0]['section'] == 'Flash distillation'
+    assert C.gate_notes({'notes': [{'heading': '2.1 Flash distillation', 'blocks': ['text']}]})['notes'][0]['heading'] == 'Flash distillation'
+
+
+def test_stage_count_in_the_text_must_match_the_computed_figure():
+    """A worked example said "feed stage 4" under a McCabe-Thiele figure whose staircase switches at stage 5."""
+    fig = {'type': 'figure', 'kind': 'mccabe', 'spec': {'alpha': 2.0, 'xD': 0.8, 'xF': 0.4, 'xB': 0.1, 'q': 1, 'R': 2.0}}
+    ex = lambda feed, n: {'type': 'example', 'problem': ['Find the stages.', fig],
+                          'steps': [{'say': 'Count', 'latex': 'N = 4 + 6 = ' + str(n), 'result': f'About {n} theoretical stages'}],
+                          'answer': f'Approximately {n} theoretical stages; the feed stage is stage {feed} from the top.'}
+    bad = C.example_problems(ex(4, 10), ('notes', 0, 'blocks', 1))
+    assert len(bad) == 1 and 'feed on stage 5' in bad[0][1] and 'stage 4' in bad[0][1] and bad[0][2] is False
+    assert C.example_problems(ex(5, 10), ('notes', 0, 'blocks', 1)) == []                 # N = 10, feed stage 5: the figure's own values
+    assert 'states 7 stages' in C.example_problems(ex(5, 7), ('notes', 0, 'blocks', 1))[0][1]
+    assert C.example_problems({**ex(5, 10), 'answer': 'Feed on stage 6 from the bottom.'}, ('notes', 0, 'blocks', 1)) == []     # counted from the bottom: 10 + 1 - 6 = 5

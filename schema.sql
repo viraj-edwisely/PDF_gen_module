@@ -64,6 +64,7 @@ create table if not exists illustrations (          -- the library of approved i
   concept text primary key, title text, description text, parts jsonb default '[]', path text,
   status text not null default 'pending',          -- pending (waits for a person), approved, rejected
   review text, created_by text, created_at timestamptz default now(), reviewed_by text, reviewed_at timestamptz);
+alter table illustrations add column if not exists marks jsonb;                  -- where each part is on the picture (fractions of its width and height), for the numbered markers
 
 do $$ begin
   if not exists (select 1 from events) then        -- first start with usage tracking: carry over the existing runs

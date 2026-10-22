@@ -27,4 +27,8 @@ PHYSICS = [
     ('second-order step response', 'control', {'num': [10], 'den': [1, 2, 10], 'plot': 'step', 'time': 6}),
     ('Bode plot', 'control', {'num': [100], 'den': [1, 11, 10, 0], 'plot': 'bode'}),
     ('root locus', 'control', {'num': [1], 'den': [1, 3, 2, 0], 'plot': 'rootlocus'}),
+    ('Txy diagram of benzene-toluene with a tie line', 'vle', {'components': [{'name': 'Benzene', 'antoine': [6.90565, 1211.033, 220.79]}, {'name': 'Toluene', 'antoine': [6.95464, 1344.8, 219.482]}], 'P': 760, 'diagram': 'txy', 'tie': 0.4}),
+    ('xy diagram of benzene-toluene', 'vle', {'components': [{'name': 'Benzene', 'antoine': [6.90565, 1211.033, 220.79]}, {'name': 'Toluene', 'antoine': [6.95464, 1344.8, 219.482]}], 'P': 760, 'diagram': 'xy'}),
+    ('McCabe-Thiele, saturated-liquid feed', 'mccabe', {'alpha': 2.5, 'xD': 0.95, 'xF': 0.5, 'xB': 0.05, 'q': 1, 'R': 2.0}),
+    ('McCabe-Thiele, partly vaporised feed, tabulated equilibrium', 'mccabe', {'eq': {'x': [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1], 'y': [0, 0.21, 0.52, 0.71, 0.84, 0.95, 1]}, 'xD': 0.9, 'xF': 0.4, 'xB': 0.1, 'q': 0.6, 'R': 3.0}),
 ]

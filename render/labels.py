@@ -131,6 +131,15 @@ def place(fig, ax, notes, fixed=(), offsets=OFFSETS, lines=True):
     return bad
 
 
+def crowded(fig, ax):
+    """Texts of a finished drawing that sit on another text or on a drawn line (for drawings that place their own labels)."""
+    fig.canvas.draw()
+    r = fig.canvas.get_renderer()
+    texts = [t for t in ax.texts if t.get_visible() and t.get_text().strip()]
+    boxes, exact, pts = [_box(t, r) for t in texts], [t.get_window_extent(r) for t in texts], _line_points(ax)      # a sign beside an arrow is fine: lines are tested against the text itself
+    return sum(any(b.overlaps(o) for o in boxes[:i] + boxes[i + 1:]) or _hits(exact[i], pts) > 2 for i, b in enumerate(boxes))
+
+
 def collisions(fig, ax):
     """Labels of a finished axes that still overlap each other (tick labels and axis labels excluded)."""
     r = fig.canvas.get_renderer()

@@ -108,3 +108,12 @@ def test_a_curve_drawn_in_parts_keeps_one_colour_and_one_legend_entry(tmp_path):
     assert colours[0] == colours[1] and colours[2] == colours[3] and colours[0] != colours[2]
     assert [t.get_text() for t in ax.get_legend().get_texts()] == ['α=0.10', 'α=0.25']
     plt.close(fig)
+
+
+def test_subscripts_typed_as_text_become_maths():
+    """Seen in a CE PDF: "Σ_i=1^n x_iK_i=1", "N_min", "W_0/12", "L_0/D" printed with their underscores."""
+    assert TEX.plain('use Σ_i=1^n x_iK_i=1 now') == r'use $\sum_{i=1}^{n}$ $x_iK_i$=1 now'
+    assert TEX.plain('N_min = 6.43 and W = W_0/12') == '$N_{min}$ = 6.43 and W = $W_0$/12'
+    assert TEX.plain('P_i^sat') == '$P_i^{sat}$'
+    assert TEX.plain('snake_case, k_means and name_final.pdf stay') == 'snake_case, k_means and name_final.pdf stay'
+    assert TEX.plain('already $x_i$ in maths') == 'already $x_i$ in maths'

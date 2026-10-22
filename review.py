@@ -1,17 +1,23 @@
 """Checks that need eyes: the model looks at each figure and each page of a GATE PDF (optional, per run), and the
 illustration library (pictures of machines and apparatus, generated once per concept and approved by a person).
 
-- figures(): every figure as an image with what it should show; a figure found wrong goes back to the writer once.
+- figures(): every figure as an image with what it should show; a figure found wrong goes back to the writer (twice at most,
+  each time looked at again) and is left out if it is still wrong.
+- drop_bad_figures(): figures whose labels still collide, or that are the wrong kind of figure, are left out.
 - pages():   the finished pages; what looks wrong becomes a note on the Runs page.
-- illustrations(): "illustration" figures take their picture from the library; a concept with no approved picture is
-  left out, and (when the run allows it) drawn once, checked by the model and queued for approval.
+- illustrations(): "illustration" figures take their picture from the library; a concept not in it is (when the run allows it)
+  drawn once and checked by the model, which also says where each named part is. A picture waiting for approval is used with an
+  "Unreviewed" tag; a rejected one is left out.
 """
 import json, os, re, subprocess, sys, tempfile
 import content as C, db, llm
 from config import ILLUSTRATIONS_PER_RUN
+from marks import clean as marks_clean      # noqa: E402  (the render folder is on the path through content)
 
 RENDER = C.RENDER
 BATCH_FIGURES, BATCH_PAGES = 6, 8
+ROUNDS = 2                           # repairs of the figures found wrong, each followed by another look
+QUESTIONS = ('practice', 'sample_paper', 'pyqs')
 
 
 def _read(name):
@@ -31,11 +37,9 @@ def figure_pngs(content):
     return [(tuple(f['path']), open(f['file'], 'rb').read(), f) for f in json.loads(r.stdout.strip().splitlines()[-1])]
 
 
-def figures(job, topic, o, content, plan):
-    """The model looks at every figure with what it should show; the items holding wrong figures are repaired once."""
-    purposes = {s['heading']: s.get('figure', '') for s in plan.get('sections', [])}
-    found = figure_pngs(content)
-    if not found: return content
+def look(job, topic, o, content, purposes, rnd, only):
+    """The model looks at the figures (only those in `only`, when given) with what each should show: its list of issues."""
+    found = [f for f in figure_pngs(content) if only is None or C.ref(f[0]) in only]
     issues = []
     for b in range(0, len(found), BATCH_FIGURES):
         part = found[b:b + BATCH_FIGURES]
@@ -45,12 +49,16 @@ def figures(job, topic, o, content, plan):
             items.append({'ref': C.ref(path), 'section': sec, 'should_show': purposes.get(sec, ''), 'kind': f['kind'], 'title': f['title'], 'caption': f['caption']})
         refs = {i['ref'] for i in items}
         tidy = lambda x: {'issues': [i for i in C._list(x.get('issues') if isinstance(x, dict) else None) if isinstance(i, dict) and i.get('ref') in refs]}
-        try: out = job.ask(f'visual_figures_{b // BATCH_FIGURES}', _fill(_read('gate/visual.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'],
-                                                                       ITEMS=json.dumps(items, ensure_ascii=False)), tidy=tidy, images=[png for _, png, _ in part])
-        except llm.LLMError as e: job.warn(f'The visual review of the figures was skipped ({str(e)[:120]}).'); return content
+        try: out = job.ask(f'visual_figures_{rnd}_{b // BATCH_FIGURES}', _fill(_read('gate/visual.md'), TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'],
+                                                                             ITEMS=json.dumps(items, ensure_ascii=False)), tidy=tidy, images=[png for _, png, _ in part])
+        except llm.LLMError as e: job.warn(f'The visual review of the figures was skipped ({str(e)[:120]}).'); return []
         issues += out['issues']
-    job.log(f'Visual review: {len(issues)} of {len(found)} figures need changes')
-    if not issues: return content
+    job.log(f'Visual review, look {rnd + 1}: {len(issues)} of {len(found)} figures need changes')
+    return issues
+
+
+def repair(job, content, issues, rnd):
+    """The items holding the figures found wrong go back to the writer; returns the content with the repaired items."""
     probs = [(C.item_path(C.unref(i['ref'])), f"a review of the drawn figure found: {str(i.get('problem', ''))[:300]}. Fix the figure's spec (or choose the "
               'right figure kind) so it shows this correctly', False) for i in issues]
     keep = {k: v for k, v in content.items() if k not in ('notes', 'practice', 'sample_paper')}
@@ -59,11 +67,41 @@ def figures(job, topic, o, content, plan):
         for q, lvl in zip(x.get('practice', []), levels): q['level'] = lvl
         q = C.gate_questions({**x, 'traps': content.get('traps'), 'revision_card': content.get('revision_card')})
         return {**keep, **C.gate_notes(x), 'practice': q['practice'], 'sample_paper': q['sample_paper']}
-    fixed = job.revise('visual_fix', content, probs, tidy_fix, lambda x: C.drawing_problems({k: x[k] for k in ('notes', 'practice', 'sample_paper')}))
-    for p, _, _ in probs:
-        try: job.warn(f'{C.label(p, fixed)}: a figure was redrawn after the visual review. Please look at it.')
-        except Exception: pass
-    return fixed
+    return job.revise(f'visual_fix{rnd}', content, probs, tidy_fix, lambda x: C.drawing_problems({k: x[k] for k in ('notes', 'practice', 'sample_paper')}))
+
+
+def leave_out(job, content, bad):
+    """bad: [(figure path, problem)] of figures still wrong after their repairs. Such a figure is left out of the PDF, with a note.
+    A question's figure stays (the question needs it, and dropping a question changes the marks): it is only noted."""
+    gone = []
+    for path, why in bad:
+        where = C.label(C.item_path(path), content)
+        if path[0] in QUESTIONS: job.warn(f'{where}: its figure is still not right ({why[:150]}). Please check it.')
+        else: gone.append(path); job.warn(f'{where}: a figure was left out because it was still wrong after repairs ({why[:150]}).')
+    C.drop(content, gone)
+
+
+def drop_bad_figures(job, content):
+    """Figures that draw but are muddled (labels still overlapping, the wrong kind of figure) after the writer's repair are left out."""
+    leave_out(job, content, C.layout_problems(content))
+    return content
+
+
+def figures(job, topic, o, content, plan):
+    """The model looks at every figure with what it should show; figures found wrong go back to the writer and are looked at
+    again, up to ROUNDS times. What is still wrong after the last repair is left out."""
+    purposes = {s['heading']: s.get('figure', '') for s in plan.get('sections', [])}
+    only, redrawn = None, set()
+    for rnd in range(ROUNDS + 1):
+        issues = look(job, topic, o, content, purposes, rnd, only)
+        if not issues: return content
+        if rnd == ROUNDS: break
+        content, only = repair(job, content, issues, rnd), {i['ref'] for i in issues}
+        for i in issues:
+            p = C.item_path(C.unref(i['ref']))
+            if p not in redrawn: redrawn.add(p); job.warn(f'{C.label(p, content)}: a figure was redrawn after the visual review. Please look at it.')
+    leave_out(job, content, [(C.unref(i['ref']), str(i.get('problem', ''))) for i in issues])
+    return content
 
 
 def pages(job, topic, pdf):
@@ -83,66 +121,86 @@ def key(spec):
     return re.sub(r'[^a-z0-9]+', '_', str(spec.get('concept') or spec.get('title') or '').lower()).strip('_')[:60]
 
 
+def brief(allow_new):
+    """What the writer is told about illustrations: the pictures already in the library (approved, or drawn and waiting for approval:
+    both appear in PDFs), and whether it may ask for a new one."""
+    rows = db.sql("select concept, title, parts from illustrations where status in ('approved', 'pending') order by concept limit 60")
+    have = '\n'.join(f"- {r['concept']} ({r['title']}): " + '; '.join(f'{k}. {p}' for k, p in enumerate(r['parts'] or [], 1)) for r in rows)
+    new = (f'You may ask for at most {ILLUSTRATIONS_PER_RUN} NEW pictures, only of real apparatus or a cut-away that a student must recognise and that no computed or drawn '
+           'kind can show: a snake_case "concept", a "title", a "description" of the view (what is cut away, what state it is in) and 4 to 8 named "parts". '
+           'It is drawn once and reused by every later PDF.') if allow_new else 'New pictures are not allowed for this PDF: use only the listed pictures, or another kind.'
+    return ('Pictures in the illustration library (kind "illustration": use its exact "concept" and name its parts as listed):\n' + (have or '(none yet)') + '\n' + new)
+
+
 def prompt(spec):
     parts = [str(p) for p in spec.get('parts', [])]
     return ('Flat technical illustration for an engineering textbook: white background, clean vector line style, purple (#4D2A87) '
             f"and gold (#D9A400) accents, neutral greys. Subject: {spec.get('title') or spec.get('concept')}. {spec.get('description', '')} "
-            f"Mark these parts with small numbered callouts 1 to {len(parts)}, in this order: " + '; '.join(f'{k + 1} {p}' for k, p in enumerate(parts)) +
-            '. No words or letters anywhere, only the callout numbers. No watermark, no border.')
+            'Show these parts clearly and separately, with space around each so a marker can sit on it: ' + '; '.join(parts) +
+            '. No words, letters, numbers, labels or arrows anywhere. No watermark, no border.')
 
 
-def check(job, spec, png, usage):
-    """The model looks at a new illustration: None when it shows what it should, else the problem."""
+def inspect(job, spec, png, usage):
+    """The model looks at a new illustration. Returns (problem or None, marks): where each named part is, as {"x", "y"} fractions of the picture."""
+    parts = [str(p) for p in spec.get('parts', [])]
     try:
         out, u, _ = llm.generate_json(job.system, _fill(_read('gate/illustration_check.md'), TITLE=spec.get('title') or spec.get('concept'),
-                                                        DESCRIPTION=spec.get('description', ''), PARTS='; '.join(map(str, spec.get('parts', [])))), 4000, job.effort, [png])
-        for k in usage: usage[k] += u.get(k, 0)
-        return None if out.get('ok') else str(out.get('problem') or 'not as described')[:300]
-    except llm.LLMError as e: return f'it could not be checked ({str(e)[:100]})'
+                                                        DESCRIPTION=spec.get('description', ''), PARTS='; '.join(parts)), 4000, job.effort, [png])
+    except llm.LLMError as e: return f'it could not be checked ({str(e)[:100]})', []
+    for k in usage: usage[k] += u.get(k, 0)
+    marks = marks_clean(out.get('marks'), len(parts))
+    problem = None if out.get('ok') else str(out.get('problem') or 'not as described')[:300]
+    hidden = [p for p, m in zip(parts, marks) if m is None]
+    return problem or (f"these parts cannot be seen: {', '.join(hidden)}" if hidden else None), marks
 
 
 def new_picture(job, spec, k):
-    """Draw a concept once (and once more if the check finds a problem), store it and queue it for approval."""
+    """Draw a concept once (and once more if the check finds a problem), store it with the places of its parts. It is kept as pending
+    (PDFs show it with an "Unreviewed" tag until a person approves it) or, if it still fails the check, as rejected. Returns the problem or None."""
     usage = {'in': 0, 'out': 0, 'cost': 0.0}
-    text, problem, png = prompt(spec), None, None
+    text, problem, png, marks = prompt(spec), None, None, []
     for attempt in range(2):
         png, price = llm.generate_image(text if not problem else text + f' Correct this: {problem}')
         usage['cost'] += price
-        problem = check(job, spec, png, usage)
+        problem, marks = inspect(job, spec, png, usage)
         if not problem: break
     path = f'{k}.png'
     db.upload('illustrations', path, png, 'image/png')
-    db.sql("insert into illustrations (concept, title, description, parts, path, status, review, created_by) values (%s,%s,%s,%s::jsonb,%s,%s,%s,%s) "
-           "on conflict (concept) do update set path=excluded.path, status=excluded.status, review=excluded.review",
-           (k, spec.get('title'), spec.get('description'), json.dumps(spec.get('parts', [])), path, 'pending' if not problem else 'rejected',
+    db.sql("insert into illustrations (concept, title, description, parts, marks, path, status, review, created_by) values (%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s) "
+           "on conflict (concept) do update set path=excluded.path, marks=excluded.marks, parts=excluded.parts, status=excluded.status, review=excluded.review",
+           (k, spec.get('title'), spec.get('description'), json.dumps(spec.get('parts', [])), json.dumps(marks), path, 'pending' if not problem else 'rejected',
             problem or 'The model found no problem.', job.run['created_by']))
     job.charge(usage, f'illustration {k}')
     return problem
 
 
 def illustrations(job, content, allow_new):
-    """Fill "illustration" figures from the library (a temp file per picture); leave out those not approved yet.
-    Returns (content, temp folder to delete after rendering)."""
+    """Fill "illustration" figures from the library (a temp file per picture). An approved picture is used as it is; one still waiting for
+    approval is used too, with an "Unreviewed" tag; a rejected one is left out. A concept not in the library is drawn now when the run
+    allows it. Returns (content, temp folder to delete after rendering)."""
     found = [(p, f) for p, f in walk_figures(content) if f.get('kind') == 'illustration']
     if not found: return content, None
     folder, drop, made = tempfile.mkdtemp(), [], 0
     for path, f in found:
         spec, k = f.setdefault('spec', {}), key(f.get('spec') or {})
         row = db.sql('select * from illustrations where concept=%s', (k,)) if k else []
-        if row and row[0]['status'] == 'approved':
-            spec['file'] = os.path.join(folder, k + '.png')
-            open(spec['file'], 'wb').write(db.download('illustrations', row[0]['path']))
-            spec.setdefault('parts', row[0]['parts'] or [])
-            continue
-        drop.append(path)
-        if not k: continue
-        if not row and allow_new and made < ILLUSTRATIONS_PER_RUN:
+        if k and not row and allow_new and made < ILLUSTRATIONS_PER_RUN:
             made += 1
             try: problem = new_picture(job, spec, k)
-            except Exception as e: job.warn(f'The illustration "{k}" could not be drawn ({str(e)[:120]}).'); continue
-            job.warn(f'New illustration "{k}" drawn and waiting for approval on the Illustrations page' + (f' (the check found: {problem})' if problem else '') +
-                     '. This PDF leaves it out; regenerate after approval to include it.')
-        else: job.warn(f'The illustration "{k}" is not approved yet ({row[0]["status"] if row else "not drawn"}), so this PDF leaves it out.')
+            except Exception as e: job.warn(f'The illustration "{k}" could not be drawn ({str(e)[:120]}).'); drop.append(path); continue
+            row = db.sql('select * from illustrations where concept=%s', (k,))
+            job.warn(f'New illustration "{k}" drawn' + (f', but the check found: {problem}. It was not used.' if problem else ' and waiting for approval on the Illustrations page.'))
+        r = row[0] if row else None
+        if r and r['status'] in ('approved', 'pending'):
+            spec['file'] = os.path.join(folder, k + '.png')
+            open(spec['file'], 'wb').write(db.download('illustrations', r['path']))
+            if r.get('marks'): spec['parts'], spec['marks'] = r['parts'] or [], r['marks']          # numbers drawn by the app on the places found for the parts
+            else: spec.setdefault('parts', r['parts'] or [])                                           # older pictures carry their numbers
+            spec['unreviewed'] = r['status'] == 'pending'
+            if spec['unreviewed']: job.warn(f'Illustration "{k}" is not approved yet: this PDF shows it with an "Unreviewed" tag. Approve it on the Illustrations page and regenerate to remove the tag.')
+            continue
+        drop.append(path)
+        if k: job.warn(f'The illustration "{k}" ' + (f'was rejected ({r["review"] or "see the Illustrations page"})' if r else 'is not in the library and new pictures are off') + ', so this PDF leaves it out.')
     C.drop(content, drop)
     return content, folder
 

@@ -2,7 +2,9 @@
 (schemdraw.logic), and Mermaid diagrams (flowcharts, state, sequence, ER, class, mind maps, timelines).
 Each kind's exact spec is its docstring: figures.reference() gives it to the model."""
 import io, re
-from figstyle import PURPLE, INK, GREY, DPI, brand
+from figstyle import PURPLE, INK, GREY, DPI, ISSUES, brand
+import labels as LBL
+from marks import mark_parts
 
 BLOCKS = {'box': 'Box', 'mixer': 'Mixer', 'sum': 'Sum', 'osc': 'Oscillator', 'oscillator': 'Oscillator', 'filter': 'Filter',
           'amp': 'Amp', 'antenna': 'Antenna', 'adc': 'Adc', 'dac': 'Dac', 'speaker': 'Speaker', 'square': 'Square', 'demod': 'Demod'}
@@ -91,7 +93,9 @@ def block(spec, out):
                 p = getattr(el, side, None)
                 dx, dy = {'W': (-0.3, 0.3), 'E': (0.3, 0.3), 'N': (-0.3, 0.35), 'S': (-0.3, -0.35)}.get(side, (-0.3, 0.3))   # beside the input, outside the circle
                 if p is not None: d += elm.Label().at((p[0] + dx, p[1] + dy)).label(str(sign), fontsize=12, color=INK)
-        d.save(out, dpi=DPI)
+    fig = d.draw(show=False)                                  # schemdraw places its own labels: count the ones that collide, like the other kinds
+    ISSUES.append(LBL.crowded(fig.getfig(), fig.ax))
+    fig.save(out, dpi=DPI)
     return out
 
 
@@ -172,21 +176,24 @@ def illustration(spec, out):
               "title": "Four-stroke SI engine", "description": "what the picture shows, for the illustrator: the view, the
               state and the parts (e.g. a cut-away of one cylinder during the intake stroke, inlet valve open, piston moving down)",
               "parts": ["Piston", "Inlet valve", "Exhaust valve", "Spark plug"] (numbered 1, 2, 3 ... on the picture, in this order)}
-    A picture for what a student must recognise rather than read values from: machines, apparatus, cut-aways (an IC
-    engine, a centrifugal pump, a Pelton wheel, a lathe, a casting mould, a test rig). Never for graphs, diagrams with
-    numbers, circuits or anything drawn to scale. The app takes it from its library of approved pictures; a new concept
-    is drawn once and appears in PDFs only after a person approves it."""
+    A picture for what a student must recognise rather than read values from: real apparatus and cut-aways (an IC
+    engine, a centrifugal pump, a Pelton wheel, a lathe, a casting mould, a test rig, tray types, a heat-exchanger cut-away).
+    Never for flowsheets, graphs, diagrams with numbers, circuits or anything drawn to scale. The app takes it from its library; a new
+    concept is drawn once (only when the run allows new pictures) and the app puts the numbered markers on it. Until a person approves
+    it, the picture carries an "Unreviewed" tag."""
     import matplotlib.pyplot as plt
     from PIL import Image as PI
     from figstyle import save
     if not spec.get('file'): raise ValueError(f'the illustration "{spec.get("concept")}" is not approved yet')
     brand()
     im = PI.open(spec['file'])
+    if spec.get('marks'): im = mark_parts(im, spec['marks'])
     parts = [str(p) for p in spec.get('parts', [])]
     rows = -(-len(parts) // 2)
     w = 6.2; h = w * im.height / im.width
     fig = plt.figure(figsize=(w, h + 0.24 * rows + 0.3))
     ax = fig.add_axes([0, (0.24 * rows + 0.3) / (h + 0.24 * rows + 0.3), 1, h / (h + 0.24 * rows + 0.3)]); ax.imshow(im); ax.axis('off')
+    if spec.get('unreviewed'): ax.text(0.01, 0.98, 'UNREVIEWED', transform=ax.transAxes, va='top', fontsize=7.5, color='#7A5200', bbox=dict(boxstyle='round,pad=0.3', fc='#FFF1BF', ec='#D9A400'))
     for k, p in enumerate(parts):
         col_, row = k // rows if rows else 0, k % rows if rows else 0
         fig.text(0.04 + 0.5 * col_, (0.24 * (rows - row) + 0.05) / (h + 0.24 * rows + 0.3), f'{k + 1}  {p}', fontsize=9, color=INK)

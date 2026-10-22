@@ -6,8 +6,8 @@ Every figure is described by a small JSON spec inside the content JSON:
 The renderers call render(kind, spec), which caches the PNG by content hash.
 
 Kinds: gantt (alias timeline), plot, bars, graph, cells, circuit (here); geometry (fig_geometry.py); block, logic,
-mermaid (fig_diagrams.py); beam, mohr, pressure, waveform, spectrum, cycle, control (fig_physics.py: shapes computed from
-physics). The exact spec of each kind is the docstring of its function; reference() turns those docstrings and the
+mermaid (fig_diagrams.py); process (fig_process.py); beam, mohr, pressure, waveform, spectrum, cycle, control, mccabe, vle (fig_physics.py:
+shapes computed from physics). The exact spec of each kind is the docstring of its function; reference() turns those docstrings and the
 GALLERY examples into the text the model reads, so the prompt can never drift from the code.
 
 CLI:  python figures.py <kind> spec.json out.png      (draw one figure)
@@ -456,12 +456,12 @@ def circuit(spec, out):
     return out
 
 
-import fig_diagrams, fig_geometry, fig_physics          # after the shared helpers above: they draw panels with plot()
+import fig_diagrams, fig_geometry, fig_physics, fig_process          # after the shared helpers above: they draw panels with plot()
 
 KINDS = {'gantt': gantt, 'timeline': gantt, 'plot': plot, 'bars': bars, 'graph': graph, 'cells': cells, 'circuit': circuit,
          'geometry': fig_geometry.geometry, 'block': fig_diagrams.block, 'logic': fig_diagrams.logic, 'mermaid': fig_diagrams.mermaid,
          'beam': fig_physics.beam, 'mohr': fig_physics.mohr, 'pressure': fig_physics.pressure, 'waveform': fig_physics.waveform,
-         'spectrum': fig_physics.spectrum, 'cycle': fig_physics.cycle, 'control': fig_physics.control,
+         'spectrum': fig_physics.spectrum, 'cycle': fig_physics.cycle, 'control': fig_physics.control, 'mccabe': fig_physics.mccabe, 'vle': fig_physics.vle, 'process': fig_process.process,
          'illustration': fig_diagrams.illustration}
 
 
@@ -596,6 +596,13 @@ GALLERY = {
                                    'processes': [{'from': '1', 'to': '2', 'type': 'isentropic'}, {'from': '2', 'to': '3', 'type': 'isobaric'},
                                                  {'from': '3', 'to': '4', 'type': 'isentropic'}, {'from': '4', 'to': '1', 'type': 'isobaric'}]}),
     'control_step_ee_in': ('control', {'num': [10], 'den': [1, 2, 10], 'plot': 'step', 'time': 6}),
+    'vle_txy_ce': ('vle', {'components': [{'name': 'Benzene', 'antoine': [6.90565, 1211.033, 220.79]}, {'name': 'Toluene', 'antoine': [6.95464, 1344.8, 219.482]}], 'P': 760, 'diagram': 'txy', 'tie': 0.4}),
+    'mccabe_binary_ce': ('mccabe', {'alpha': 2.5, 'xD': 0.95, 'xF': 0.5, 'xB': 0.05, 'q': 1, 'R': 2.0}),
+    'process_flash_ce': ('process', {'nodes': [{'id': 'F', 'type': 'terminal', 'label': 'Feed', 'at': [0, 0]}, {'id': 'H', 'type': 'exchanger', 'label': 'Heater', 'at': [1, 0]},
+                                               {'id': 'D', 'type': 'drum', 'label': 'Flash drum', 'at': [2, 0]}, {'id': 'V', 'type': 'terminal', 'label': 'Vapour V', 'at': [3, -1]},
+                                               {'id': 'L', 'type': 'terminal', 'label': 'Liquid L', 'at': [3, 1]}],
+                                     'streams': [{'from': 'F', 'to': 'H'}, {'from': 'H', 'to': 'D', 'label': 'Hot feed'},
+                                                 {'from': 'D', 'to': 'V', 'from_side': 'N', 'to_side': 'W'}, {'from': 'D', 'to': 'L', 'from_side': 'S', 'to_side': 'W'}]}),
 }
 
 def reference():

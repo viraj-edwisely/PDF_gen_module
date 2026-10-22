@@ -17,19 +17,25 @@ that it draws. A figure that cannot be drawn, or whose labels still collide, is 
 ## Which kind: in this order
 1. **Computed from physics** when the concept has one: the app computes the shape, so it is always right.
    beam (+ "diagrams": SFD/BMD), mohr, pressure (hydrostatic force on a plate), waveform (modulation, ASK/FSK/PSK),
-   spectrum (AM, DSB-SC, SSB, line spectra), cycle (P-V, T-s, p-h: ideal gas, steam, refrigerants), control (step, Bode,
+   spectrum (AM, DSB-SC, SSB, line spectra), mccabe (McCabe-Thiele stage diagram: operating lines, q-line, numbered stages), vle (Txy and xy of a binary from Antoine constants),
+   cycle (P-V, T-s, p-h: ideal gas, steam, refrigerants), control (step, Bode,
    Nyquist, root locus). Give the numbers of the example; never work out the curve yourself and draw it as a plot.
-2. **Structured drawing**: geometry (anything with real positions and proportions: bodies, plates, traverses, free-body
+2. **Structured drawing**: process (flowsheets of equipment joined by streams), geometry (anything with real positions and proportions: bodies, plates, traverses, free-body
    diagrams, trusses, velocity triangles, floating bodies), block (signal and control block diagrams), circuit,
    logic (gates from a Boolean expression, K-maps, timing diagrams), graph (trees, automata, networks), cells (arrays,
    memory, traces, registers), gantt (schedules, pipelines), bars (data), plot (a function, data, a distribution).
 3. **mermaid**: flowcharts of procedures and decision rules, concept maps, state diagrams, sequence diagrams (protocols),
    ER and class diagrams, timelines.
-4. **illustration** (last resort): a picture of a machine, apparatus or cut-away that a student must recognise and that
-   no kind above can draw (a four-stroke engine, a centrifugal pump, a Pelton wheel, a Francis turbine, a lathe, a
-   shaper, a casting mould and its gating, a welding set-up, a metacentric-height apparatus, a waveguide, a dish antenna).
-   Never for anything with values, scales, graphs, circuits or block diagrams. Use a stable "concept" key
-   (four_stroke_si_engine) so every PDF gets the same approved picture, and name every numbered part in "parts".
+4. **illustration** (last resort): a picture of REAL apparatus or a cut-away that a student must recognise and that no kind above can
+   draw (a four-stroke engine, a centrifugal pump, a Pelton wheel, a Francis turbine, a lathe, a shaper, a casting mould and its gating,
+   a welding set-up, a metacentric-height apparatus, tray types in a column, a heat-exchanger cut-away, a waveguide, a dish antenna).
+   Never for flowsheets (process), graphs, circuits, block diagrams or anything with values or scales. Use a stable "concept" key
+   (four_stroke_si_engine) so every PDF gets the same picture, name every part in "parts" (the app draws the numbers on it), and look
+   at the illustration library listed in the section prompt first: reuse a listed concept before asking for a new one, and ask for a
+   new one only when the prompt says new pictures are allowed.
+A plot shows the behaviour the student must see, so choose its range for that: a function with a singularity or a pole (1/x, ln x, tan x)
+or a limit at infinity starts clear of the singularity (x from 0.5 or 1, not 0.01) so no spike swamps the rest, and uses a log axis when
+the values span decades. The caption says what to read off the figure, never how its range was chosen ("the plot starts at positive x").
 plot is only for a graph: both axes are real quantities with units, and the student reads a value off a curve. Anything
 you would sketch on the board (a camera and its rays, a photograph and the ground, footprints, a tank, a body, a beam
 of light, a layout) is geometry, with no axes, and dim items for the lengths. A plot whose axes would be "schematic", or
@@ -58,6 +64,14 @@ Use the figure a textbook uses: students recognise it and SMEs expect it.
 - Thermodynamic cycles: cycle (Otto, Diesel, Dual, Brayton on p-v and T-s; Rankine on T-s with the dome; vapour
   compression on p-h and T-s). Processes of a closed system: cycle or plot of the p-V path with the work area filled.
 - Mechanisms, kinematics, velocity triangles (turbines, pumps): geometry. Vibration responses: plot.
+- Process flow and flowsheets (distillation column with condenser and reboiler, flash drum, reactor with recycle, heat exchanger,
+  pump circuit, steam still, extractive or azeotropic distillation with solvent recovery): process, with the main flow on one row
+  and recycles on the row above or below. Never block (a signal chain) or plot. Stream labels are short (a symbol or one or two
+  words: F, D, B, L, V, Steam, Reflux); a stream between neighbouring pieces of equipment has room for about 8 letters.
+- Stage-by-stage design of a binary column (number of stages, feed stage, reflux): mccabe, computed from alpha (or an
+  equilibrium table), xD, xF, xB, q and R. Take the stage count and feed stage in your text from the same inputs (the figure's
+  title shows what they compute). Txy and xy diagrams of a binary (boiling-point diagram, flash notes): vle, from the Antoine constants of the two
+  components (never a hand-drawn curve through a few points).
 - Surveying: geometry with bearing items and "north": true. Photogrammetry: geometry - the camera station O, the photo
   plane as a short segment at distance f, rays to the ground as dashed segments, the ground and datum, with H, h and f
   as dims; relief displacement with the principal point, the base and top images and d as a dim; stereo pairs with

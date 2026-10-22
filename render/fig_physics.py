@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, Polygon
 from figstyle import PURPLE, LAV, INK, GREY, PALETTE, ISSUES, brand, save, _fmt
 import labels as LBL
+from stages import antoine_vle, equilibrium, mccabe_solution
 
 TEAL, GOLD, PINK = '#2E8B87', '#D9A400', '#B5487A'
 
@@ -508,3 +509,60 @@ def control(spec, out):
                                     [{'x': float(z.real), 'y': float(z.imag), 'marker': 'o', 'mfc': 'none', 'color': 'red'} for z in zeros]})
         return plot(ps, out)
     raise ValueError('plot must be "step", "bode", "nyquist" or "rootlocus"')
+
+
+# ---------------------------------------------------------------- McCabe-Thiele and vapour-liquid equilibrium
+def mccabe(spec, out):
+    """spec: {"alpha": 2.5 (constant relative volatility of the more volatile component) | "eq": {"x": [...], "y": [...]} (a table),
+              "xD": 0.95, "xF": 0.5, "xB": 0.05 (mole fractions of the more volatile component), "q": 1 (feed condition:
+              1 saturated liquid, 0 saturated vapour; default 1), "R": 2.0 (external reflux ratio, above the minimum)}
+    The McCabe-Thiele diagram, computed: equilibrium curve, diagonal, rectifying line, q-line and stripping line, and the
+    staircase of equilibrium stages from xD to xB, numbered, with the feed stage marked. The title gives the stage count
+    (a total condenser is not counted; the partial reboiler is the last stage). A reflux below the minimum is an error.
+    Use it for every stage-count question; take the stage count and the feed stage in your text from the same inputs."""
+    s = mccabe_solution(spec)
+    yeq = equilibrium(spec)[0]; xx = np.linspace(0, 1, 201)
+    xD, xB, xF = (float(spec[k]) for k in ('xD', 'xB', 'xF'))
+    curves = [{'x': list(xx), 'y': list(yeq(xx)), 'label': 'Equilibrium curve', 'color': PURPLE},
+              {'x': [0, 1], 'y': [0, 1], 'label': 'y = x', 'style': '--', 'color': GREY, 'lw': 1.2},
+              {'x': [s['xi'], xD], 'y': [s['yi'], xD], 'label': 'Rectifying line', 'color': GOLD},
+              {'x': [xB, s['xi']], 'y': [xB, s['yi']], 'label': 'Stripping line', 'color': TEAL},
+              {'x': [xF, s['xi']], 'y': [xF, s['yi']], 'label': 'q-line', 'style': ':', 'color': PINK},
+              {'x': s['x'], 'y': s['y'], 'label': 'Stages', 'color': '#7B5CB8', 'lw': 1.4}]
+    corners = [(x, y) for x, y in zip(s['x'][1::2], s['y'][1::2])]               # where each stage meets the equilibrium curve
+    points = [{'x': v, 'y': v, 'label': f'{n} = {v:g}'} for n, v in (('xD', xD), ('xF', xF), ('xB', xB))]
+    if s['N'] <= 12: points += [{'x': x, 'y': y, 'label': str(k)} for k, (x, y) in enumerate(corners, 1)]
+    ps, plot = _plot({'size': [5.4, 5.4], 'equal': True, 'xlim': [0, 1], 'ylim': [0, 1], 'xlabel': spec.get('xlabel', 'x (liquid mole fraction)'),
+                      'ylabel': spec.get('ylabel', 'y (vapour mole fraction)'), 'curves': curves, 'points': points,
+                      'title': f"N = {s['N']} stages, feed on stage {s['feed']}"})
+    return plot(ps, out)
+
+
+def vle(spec, out):
+    """spec: {"components": [{"name": "Benzene", "antoine": [6.90565, 1211.033, 220.79]}, {"name": "Toluene", "antoine": [6.95464, 1344.8, 219.482]}]
+                 (Antoine constants A, B, C for log10 of the pressure in mmHg and the temperature in degC; either order, the one that boils
+                 first is plotted as "x" and "y"),
+              "P": 760 (total pressure, mmHg), "diagram": "txy" (bubble and dew curves against composition, default) | "xy"
+                 (equilibrium curve with the diagonal), "tie": 0.4 (optional liquid mole fraction: a tie line on the Txy diagram with its
+                 x, y and T marked)}
+    Computed vapour-liquid equilibrium of an ideal binary mixture at constant pressure. Use it for every Txy and xy diagram of a binary
+    (boiling-point diagrams, flash and distillation notes); the pure boiling points and the mean relative volatility are marked."""
+    s = antoine_vle(spec)
+    name, other = s['names']
+    label = f'{name} mole fraction'
+    if spec.get('diagram', 'txy') == 'xy':
+        ps, plot = _plot({'size': [4.6, 4.6], 'equal': True, 'xlim': [0, 1], 'ylim': [0, 1], 'xlabel': f'x ({label}, liquid)', 'ylabel': f'y ({label}, vapour)',
+                          'curves': [{'x': list(s['x']), 'y': list(s['y']), 'label': 'Equilibrium curve', 'color': PURPLE},
+                                     {'x': [0, 1], 'y': [0, 1], 'label': 'y = x', 'style': '--', 'color': GREY, 'lw': 1.2}],
+                          'title': f"Mean relative volatility α ≈ {s['alpha']:.2f}"})
+        return plot(ps, out)
+    curves = [{'x': list(s['x']), 'y': list(s['T']), 'label': 'Bubble-point curve (liquid)', 'color': PURPLE},
+              {'x': list(s['y']), 'y': list(s['T']), 'label': 'Dew-point curve (vapour)', 'color': GOLD}]
+    points = [{'x': 0, 'y': s['Tb'][1], 'label': f"{other} {s['Tb'][1]:.1f} °C", 'offset': (10, 8)}, {'x': 1, 'y': s['Tb'][0], 'label': f"{name} {s['Tb'][0]:.1f} °C", 'offset': (-84, -16)}]
+    if s.get('tie'):
+        t = s['tie']
+        curves.append({'x': [t['x'], t['y']], 'y': [t['T'], t['T']], 'label': 'Tie line', 'style': '--', 'color': TEAL, 'lw': 1.6})
+        points += [{'x': t['x'], 'y': t['T'], 'label': f"x = {t['x']:.2f}", 'offset': (-48, -14)}, {'x': t['y'], 'y': t['T'], 'label': f"y = {t['y']:.2f}", 'offset': (6, 8)}]
+    ps, plot = _plot({'size': [5.6, 3.8], 'xlim': [0, 1], 'ylim': [s['Tb'][0] - 5, s['Tb'][1] + 4], 'xlabel': f'x, y ({label})', 'ylabel': 'Temperature (°C)', 'curves': curves, 'points': points,
+                      'title': f"{spec.get('P', 760):g} mmHg"})
+    return plot(ps, out)

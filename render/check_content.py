@@ -4,7 +4,7 @@ Prints the failures as JSON: [{"path": [...], "what": "figure" | "maths" | "layo
 (layout: the figure draws, but labels still overlap).
 
 Usage: python check_content.py content.json     (run as a subprocess: matplotlib must not be shared between threads)"""
-import json, sys
+import json, re, sys
 import figures
 from render_common import math_img, math_split
 import tex as TEX
@@ -26,10 +26,18 @@ def _labels(x):
         for v in x: yield from _labels(v)
 
 
+EQUIPMENT = re.compile(r'\b(column|reboiler|condenser|still|reactor|drum|exchanger|evaporator|boiler|decanter|absorber|stripper|separator|'
+                       r'tank|pump|heater|cooler|compressor|turbine|vessel|furnace)\b', re.I)
+
+
 def misuse(kind, spec):
-    """A figure that draws but is the wrong figure: a sketch drawn as a graph, a graph with nothing on one axis, or
-    labels so long they cannot sit clear of the drawing. Returns the reason, or ''."""
-    if kind not in ('plot', 'geometry') or not isinstance(spec, dict): return ''
+    """A figure that draws but is the wrong figure: process equipment drawn as a signal chain, a sketch drawn as a graph,
+    a graph with nothing on one axis, or labels so long they cannot sit clear of the drawing. Returns the reason, or ''."""
+    if kind == 'block' and isinstance(spec, dict):
+        found = [m.group(0) for t in _labels(spec) if (m := EQUIPMENT.search(t))]
+        if found: return (f'"{found[0]}" is process equipment, and a block diagram is a signal or control chain (its arrows are signals, not streams): '
+                          'draw this process with the process kind (the equipment on a grid, the streams as labelled arrows)')
+    if kind not in ('plot', 'geometry', 'process') or not isinstance(spec, dict): return ''
     if kind == 'plot' and not spec.get('panels'):
         if 'schematic' in f"{spec.get('xlabel', '')} {spec.get('ylabel', '')}".lower():
             return ('this is a sketch drawn as a graph (its axes are "schematic"): draw it as geometry (no axes) with '

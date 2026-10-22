@@ -133,14 +133,15 @@ if mode == 'gate':
                                   help="The writer re-solves every question and worked example, and flags examples, figures and "
                                        "questions that do not teach (one-line examples, decorative or mismatched figures, recall questions). Those go back to "
                                        "the writer once, with a note for you. Adds about $0.10-0.20 per PDF.")
-    options['visual_review'] = st.toggle('Visual review of figures and pages', value=False,
+    options['visual_review'] = st.toggle('Visual review of figures and pages', value=True,
                                          help='The model looks at every drawn figure (is it the right figure, technically correct, are its labels readable?) '
-                                              'and every finished page (empty space, overlapping or raw text). Wrong figures go back to the writer once; '
+                                              'and every finished page (empty space, overlapping or raw text). Wrong figures go back to the writer (twice at most) and are left out if still wrong; '
                                               'page problems become notes. Adds a few cents per PDF.')
     options['illustrations'] = st.toggle('Draw new illustrations when a topic needs one', value=False,
-                                         help=f"Pictures of machines and apparatus (an engine, a pump, a test rig) come from the Illustrations library. "
-                                              f"With this on, a concept that has no picture yet is drawn once ({IMAGE_MODEL['name']}, about ${IMAGE_MODEL['price']:.2f} each, "
-                                              f"at most {ILLUSTRATIONS_PER_RUN} per run) and waits on the Illustrations page: PDFs use it only after someone approves it.")
+                                         help=f"Pictures of real apparatus (an engine, a pump, tray types, a heat-exchanger cut-away) come from the Illustrations library: the writer is shown "
+                                              f"what is in it and uses it whatever this setting. With this on, the writer may also ask for new ones: each is drawn once ({IMAGE_MODEL['name']}, "
+                                              f"about ${IMAGE_MODEL['price']:.2f} each, at most {ILLUSTRATIONS_PER_RUN} per run), checked by the model, numbered by the app and used in this PDF at once "
+                                              f"with an 'Unreviewed' tag, until someone approves it on the Illustrations page and the PDF is regenerated.")
 else:
     options['subject'] = st.text_input('Subject', key='subject').strip()
     c1, c2 = st.columns(2)
@@ -160,7 +161,7 @@ estimate = 1.15 * cost(calls * (context + 15_000), out_tokens * EFFORT_OUTPUT[ef
 if mode == 'gate' and options.get('verify'):
     estimate += n * (cost(25_000, 4_000) + cost(30_000, 10_000))      # the review, and fixing what it found
 if mode == 'gate' and options.get('visual_review'):
-    estimate += n * (5 * cost(15_000, 2_000) + cost(30_000, 8_000))      # figures and pages looked at in batches, and fixing what they found
+    estimate += n * (5 * cost(15_000, 2_000) + 2 * cost(30_000, 8_000))      # figures and pages looked at in batches, and fixing what they found (two rounds)
 if mode == 'gate' and options.get('illustrations'):
     estimate += ILLUSTRATIONS_PER_RUN * IMAGE_MODEL['price'] * 1.5      # at most this many new pictures per run, some drawn twice
 minutes = (-(-n // TOPIC_PARALLEL) * 10) if mode == 'gate' else 12

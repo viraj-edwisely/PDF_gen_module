@@ -28,7 +28,7 @@ Return this JSON:
   "storyline": "3 to 5 sentences: how the sections build on each other, from what the idea is and why it matters, to how it works, how it is analysed, its variants, and how GATE tests it",
   "coverage": [{"subtopic": "each subtopic above, and each item of the syllabus line", "section": "the heading of the section that teaches it"}],
   "notation": [{"symbol": "μ", "meaning": "modulation index", "unit": "", "convention": "0 < μ ≤ 1 for envelope detection"}],
-  "sections": [{"heading": "short descriptive title", "builds_on": "the heading of the earlier section this one needs, or empty",
+  "sections": [{"heading": "short descriptive title, without a number (the PDF numbers the sections)", "builds_on": "the heading of the earlier section this one needs, or empty",
                 "ideas": "the ideas this section teaches, in the order taught",
                 "example": "its worked example: the archetype it trains, the data, what is asked, and the step a rushed student gets wrong",
                 "figure": "kind: what it draws -> what the student reads off it (e.g. 'beam with SFD/BMD: 6 m SSB with UDL -> maximum moment 45 kN·m at mid-span')",

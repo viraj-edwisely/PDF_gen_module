@@ -75,6 +75,9 @@ SUP = str.maketrans('0123456789-+', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺')
 UNIT = r'(?:mm|cm|km|m|s|kg|g|N|kN|MN|Pa|kPa|MPa|GPa|J|kJ|MJ|W|kW|MW|Hz|rad|K|A|V|Ω|mol|L)'
 
 
+SUBSCRIPT = r'(?:\{[^{}$]+\}|[A-Za-z0-9]|[a-z]{2,4})'            # the subscript of a variable typed as text: _0, _i, _{max}, _min
+
+
 def plain(text):
     """Running text as written by a model, made printable before its $...$ maths is drawn: units and powers that sit
     outside maths become characters (m$^3$ -> m³, mm^4 -> mm⁴, 10^6 -> 10⁶, kg/m3 -> kg/m³, N.m -> N·m), and a power with
@@ -85,6 +88,9 @@ def plain(text):
     parts = re.split(r'((?<!\\)\$.+?(?<!\\)\$)', t)
     for k in range(0, len(parts), 2):                       # outside maths only
         p = parts[k]
+        p = re.sub(r'[Σ∑]_\{?(\w)=(\w+)\}?\^\{?(\w+)\}?', r'$\\sum_{\1=\2}^{\3}$', p)                                  # Σ_i=1^n typed as text
+        p = re.sub(rf'(?<![\w$\\])[A-Za-z]_{SUBSCRIPT}(?:[A-Za-z]_{SUBSCRIPT})*(?:\^(?:\{{[^{{}}$]+\}}|[A-Za-z0-9]+))?(?![A-Za-z0-9_])',
+                   lambda m: '$' + re.sub(r'([_^])([a-z]{2,4})(?![A-Za-z_])', r'\1{\2}', m.group(0)) + '$', p)                                # W_0, N_min, x_iK_i, P_i^sat
         p = re.sub(r'(?<=[\w)\]])(?:\^|\*\*)\{?([-+]?\d+)\}?(?!\w|\.\d)', lambda m: m.group(1).translate(SUP), p)    # mm^4, 10^6, x**2
         p = re.sub(r'(?<![\w$\\])([A-Za-z])\^\{?([-+]?[A-Za-z][\w]*)\}?', r'$\1^{\2}$', p)                      # e^-jwt, 2^n stays below
         p = re.sub(r'(?<=\d)\^\{?([A-Za-z]\w*)\}?', r'$^{\1}$', p)                                              # 2^n

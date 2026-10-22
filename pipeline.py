@@ -349,7 +349,8 @@ def gate(job):
     pyqs = job.step('pyq', lambda: pyq_step(job, topic, o))
     pyq_brief = '\n'.join('- ' + q['question'][:160] for q in pyqs) or '(none)'
     base = dict(TOPIC=topic, PAPER=o['paper'], SUBJECT=o['subject'], BOOK=ctx['text'], BOOK_NOTE=book_note(ctx['found'], ctx['text']), USER_PROMPT=o.get('prompt') or '(none)',
-                SUBTOPICS='; '.join(subtopics) or '(none given: take them from the syllabus line and the standard textbooks)')
+                SUBTOPICS='; '.join(subtopics) or '(none given: take them from the syllabus line and the standard textbooks)',
+                ILLUSTRATIONS=review.brief(o.get('illustrations')))
 
     def book_for(name, sections):
         """The prompt fields with book text searched for these planned sections (a whole scope is already all there)."""
@@ -418,6 +419,7 @@ def gate(job):
     if o.get('visual_review'):
         job.progress('Visual review of the figures')
         content = review.figures(job, topic, o, content, plan)
+    content = review.drop_bad_figures(job, content)
     content, folder = review.illustrations(job, content, o.get('illustrations'))
     job.progress('Rendering the PDF')
     try: render_and_store(job, 'gate', content, look=(lambda pdf: review.pages(job, topic, pdf)) if o.get('visual_review') else None)

@@ -16,13 +16,14 @@ RENDER = os.path.join(HERE, 'render')
 sys.path.insert(0, RENDER)
 from check_gate_level import check as gate_check, key_formulas   # noqa: E402  (pure Python)
 from safe_eval import safe_eval                     # noqa: E402  (numpy only)
+from stages import mccabe_solution                  # noqa: E402  (numpy and scipy only)
 from tex import normalize as tex_normalize      # noqa: E402  (pure Python)
 from llm import loads                               # noqa: E402  (json.loads that keeps LaTeX backslashes)
 
 GATE_BLOCKS = {'para', 'subhead', 'bullets', 'numbered', 'formula', 'table', 'example', 'trap', 'note', 'callout', 'code', 'figure', 'spacer', 'pagebreak'}
 NONGATE_BLOCKS = {'situation', 'concept', 'worked_example', 'pitfall', 'note', 'quick_check', 'para', 'table', 'bullets', 'numbered', 'formula', 'figure', 'subhead'}
 FIGURE_KINDS = {'gantt', 'timeline', 'plot', 'bars', 'graph', 'cells', 'circuit', 'geometry', 'block', 'logic', 'mermaid',
-                'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'illustration'}
+                'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'mccabe', 'vle', 'process', 'illustration'}
 FIELD = {'para': 'text', 'subhead': 'text', 'bullets': 'items', 'numbered': 'items', 'formula': 'latex', 'code': 'text', 'callout': 'text',
          'trap': 'text', 'situation': 'text', 'concept': 'text', 'pitfall': 'text', 'worked_example': 'text', 'quick_check': 'items'}
 ALIASES = {'text': ('content', 'body', 'value', 'paragraph', 'description', 'statement', 'code'), 'items': ('list', 'points', 'bullets', 'steps', 'entries', 'questions'),
@@ -375,15 +376,20 @@ def _first(d, *keys):
     return None
 
 
+def unnumber(heading):
+    """A section heading without a number the writer put in front of it ("2.1 Flash distillation", "3. Traps"): the PDF numbers sections itself."""
+    return re.sub(r'^\s*\d+(?:\.\d+)+\.?\s+|^\s*\d+[.)]\s+', '', heading)
+
+
 def gate_plan(p):
     p = clean(p if isinstance(p, dict) else {})
     p['sections'] = [s if isinstance(s, dict) else {'heading': _text(s)} for s in _list(_first(p, 'sections', 'outline'))]
     for s in p['sections']:
-        s['heading'] = _text(_first(s, 'heading', 'title', 'name') or '')
+        s['heading'] = unnumber(_text(_first(s, 'heading', 'title', 'name') or ''))
         s['figure'] = _text(s.get('figure') or '')
         for k in ('builds_on', 'no_figure_reason'): s[k] = _text(s.get(k) or '')
     p['storyline'] = _text(p.get('storyline'))
-    p['coverage'] = [{'subtopic': _text(_first(c, 'subtopic', 'item', 'topic')), 'section': _text(_first(c, 'section', 'heading'))}
+    p['coverage'] = [{'subtopic': _text(_first(c, 'subtopic', 'item', 'topic')), 'section': unnumber(_text(_first(c, 'section', 'heading')))}
                      for c in _list(p.get('coverage')) if isinstance(c, dict)]
     p['notation'] = [{k: _text(_first(n, k, *alts) or '') for k, alts in (('symbol', ('sym',)), ('meaning', ('name', 'description')), ('unit', ('units',)),
                                                                           ('convention', ('sign', 'note')))} for n in _list(p.get('notation')) if isinstance(n, dict)]
@@ -396,7 +402,7 @@ def gate_plan(p):
 def gate_notes(out):
     out = clean(out if isinstance(out, dict) else {})
     notes = _list(_first(out, 'notes', 'sections'))
-    out = {'notes': [{'heading': _text(_first(n, 'heading', 'title') or ''), 'blocks': blocks(_first(n, 'blocks', 'content'), 'gate'),
+    out = {'notes': [{'heading': unnumber(_text(_first(n, 'heading', 'title') or '')), 'blocks': blocks(_first(n, 'blocks', 'content'), 'gate'),
                       **({'no_example': True} if n.get('no_example') else {})} for n in notes if isinstance(n, dict)]}
     return out
 
@@ -628,15 +634,25 @@ def block_problems(bs, allowed, path):
     return out
 
 
-def drawing_problems(obj):
-    """Figures and maths that do not draw, found by drawing them in a subprocess exactly as the renderer will."""
+def _drawing_check(obj):
+    """What the drawing check found, as its raw list [{"path", "what", "error"}]: every figure and piece of maths drawn in a
+    subprocess exactly as the renderer will."""
     path = os.path.join(tempfile.mkdtemp(), 'content.json')
     json.dump(obj, open(path, 'w', encoding='utf-8'))
     try: r = subprocess.run([sys.executable, os.path.join(RENDER, 'check_content.py'), path], capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired: return []
-    if r.returncode: return []          # the checker itself failed: the renderer's own fallbacks still apply
+    return [] if r.returncode else json.loads(r.stdout)          # the checker itself failed: the renderer's own fallbacks still apply
+
+
+def drawing_problems(obj):
+    """Figures and maths that do not draw, as repairable items."""
     return [(item_path(f['path']), ('this figure cannot be drawn: ' if f['what'] == 'figure' else '') + f['error'], f['what'] == 'figure')
-            for f in json.loads(r.stdout)]          # maths that does not draw is shown as text, and overlapping labels are soft: both kept
+            for f in _drawing_check(obj)]          # maths that does not draw is shown as text, and overlapping labels are soft: both kept
+
+
+def layout_problems(obj):
+    """Figures that draw but are muddled (labels still overlapping, or the wrong kind of figure), as (figure path, why)."""
+    return [(tuple(f['path']), f['error']) for f in _drawing_check(obj) if f['what'] == 'layout']
 
 
 def walk_blocks(bs):
@@ -691,6 +707,37 @@ def _coarse(c):
     bends = sum(1 for a, b in zip(s, s[1:]) if a and b and abs(abs(a) - abs(b)) > 0.1 * max(abs(a), abs(b)))
     return bends >= 3
 
+STAGES_SAID = re.compile(r'\b(\d+)\s+(?:theoretical |equilibrium |ideal )?(?:stages|plates|trays)\b|\bN\s*=\s*(\d+)(?!\s*[-+×=])', re.I)
+FEED_STAGE_SAID = re.compile(r'\b(?:stage|plate|tray)\s*(?:no\.?\s*)?(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+(?:stage|plate|tray)\b', re.I)
+
+
+def _strings(x):
+    """Every text in a block, the figures' specs left out."""
+    if isinstance(x, str): yield x
+    elif isinstance(x, dict):
+        for k, v in x.items():
+            if k != 'spec': yield from _strings(v)
+    elif isinstance(x, list):
+        for v in x: yield from _strings(v)
+
+
+def stage_problems(f, path, example):
+    """The stage count and feed stage a worked example states, against what its McCabe-Thiele figure computes from the same inputs
+    (a text that says feed stage 4 under a figure whose staircase switches at stage 5 teaches the wrong thing)."""
+    try: s = mccabe_solution(_dict(f.get('spec')))
+    except (KeyError, TypeError, ValueError): return []                   # a spec that cannot be solved is reported by the drawing check
+    said_n, said_feed = set(), set()
+    for sentence in re.split(r'(?<=[.;:])\s+|\n', '\n'.join(_strings(example))):
+        said_n |= {int(v) for m in STAGES_SAID.finditer(sentence) for v in m.groups() if v}
+        if re.search(r'\bfeed\b', sentence, re.I):
+            bottom = re.search(r'\bbottom\b', sentence, re.I)
+            said_feed |= {s['N'] + 1 - int(v) if bottom else int(v) for m in FEED_STAGE_SAID.finditer(sentence) for v in m.groups() if v}
+    wrong = []
+    if said_n and not said_n & {s['N'], s['N'] - 1}: wrong.append(f'it states {", ".join(map(str, sorted(said_n)))} stages')
+    if said_feed and s['feed'] not in said_feed: wrong.append(f'it puts the feed on stage {", ".join(map(str, sorted(said_feed)))}')
+    return [(path, f'the figure is computed from its inputs and gives N = {s["N"]} stages (the partial reboiler counted as the last, a total condenser not counted) with the '
+                   f'feed on stage {s["feed"]} from the top, but {" and ".join(wrong)}: correct the text to these values, or change the figure\'s inputs', False)] if wrong else []
+
 
 def figure_problems(f, path, example_text=None):
     """A figure that cannot teach anything: data from another example, no axis labels, or a two-node diagram."""
@@ -721,10 +768,10 @@ def example_problems(b, path):
         out.append((path, 'the worked example shows almost no working: make it a GATE 2-mark problem solved in 3 or more "steps" with the intermediate values', False))
     elif b.get('check') and not worked and formulas < 2:          # working written as paragraphs
         out.append((path, 'write the solution as "steps" (each with "say", one "latex" line of working and its "result"), not as paragraphs', False))
-    return out + [p for f in figs for p in figure_problems(f, path, rest)]
+    return out + [p for f in figs for p in figure_problems(f, path, rest) + (stage_problems(f, path, b) if f.get('kind') == 'mccabe' else [])]
 
 
-META = re.compile(r'\b(schematic(ally)?|not (drawn )?to scale|drawn (at|as|in|with) |for (visual )?clarity|purely illustrative|for illustration)\b', re.I)
+META = re.compile(r'\b(schematic(ally)?|not (drawn )?to scale|drawn (at|as|in|with) |for (visual )?clarity|purely illustrative|for illustration|the (plot|graph) (starts?|begins?) at positive|(curves?|lines?) (diverges?|spikes?) toward the (left|right) edge)\b', re.I)
 
 
 def writing_problems(note, path, earlier=()):

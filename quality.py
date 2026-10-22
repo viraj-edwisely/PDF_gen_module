@@ -4,7 +4,7 @@ import re
 from content import walk_blocks, _key
 from check_gate_level import key_formulas
 
-COMPUTED = {'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control'}
+COMPUTED = {'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'mccabe', 'vle'}
 
 
 def _words(t): return len(re.sub(r'\$[^$]*\$', 'x', str(t or '')).split())
