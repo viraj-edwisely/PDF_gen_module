@@ -10,14 +10,18 @@ BLOCKS = {'box': 'Box', 'mixer': 'Mixer', 'sum': 'Sum', 'osc': 'Oscillator', 'os
           'amp': 'Amp', 'antenna': 'Antenna', 'adc': 'Adc', 'dac': 'Dac', 'speaker': 'Speaker', 'square': 'Square', 'demod': 'Demod'}
 
 
+def _width(text, per_char=0.16, pad=0.5):
+    """Width in drawing units that the longest line of a label needs."""
+    return per_char * max((len(x) for x in str(text).split('\n')), default=4) + pad
+
+
 def _element(item, dsp):
     """One block of the chain, sized to its label."""
     kind = str(item.get('el', 'box')).lower()
     if kind not in BLOCKS: raise ValueError(f'unknown block {kind!r}; use one of {sorted(BLOCKS)} (and "in"/"out" for the ends)')
     lab = str(item.get('label', ''))
     if kind == 'box':
-        w = max(1.6, 0.16 * max((len(x) for x in lab.split('\n')), default=4) + 0.5)
-        return dsp.Box(w=w, h=1.0 if '\n' not in lab else 1.4).label(lab, fontsize=10), False
+        return dsp.Box(w=max(1.6, _width(lab)), h=1.0 if '\n' not in lab else 1.4).label(lab, fontsize=10), False
     if kind == 'filter':
         resp = {'lp': 'lp', 'lpf': 'lp', 'low': 'lp', 'bp': 'bp', 'bpf': 'bp', 'band': 'bp', 'hp': 'hp', 'hpf': 'hp', 'high': 'hp'}.get(str(item.get('filter', 'lp')).lower(), 'lp')
         return getattr(dsp, 'Filter')(response=resp), True
@@ -47,7 +51,7 @@ def block(spec, out):
             if kind == 'in':
                 d += dsp.Line().right(0.6).label(str(item.get('label', '')), 'left', color=INK)
                 continue
-            arrow = dsp.Arrow().right(1.3 if item.get('edge') else 0.9)
+            arrow = dsp.Arrow().right(max(1.3, _width(item['edge'], 0.145, 0.3)) if item.get('edge') else 0.9)    # long enough for its label
             if item.get('edge'): arrow = arrow.label(str(item['edge']), 'top', fontsize=9, color=INK)
             if kind == 'out':
                 d += arrow.length(1.2).label(str(item.get('label', '')), 'right', color=INK)
@@ -79,9 +83,9 @@ def block(spec, out):
             d += dsp.Dot().at(start)
             d += dsp.Line().at(start).toy(y)
             if f.get('box'):
-                mid = (start[0] + dst.S[0]) / 2
-                d += dsp.Arrow().at((start[0], y)).tox(mid + 0.9)
-                d += (b := dsp.Box(w=1.8, h=0.9).anchor('E').at((mid + 0.9, y)).label(str(f['box']), fontsize=10))
+                mid, w = (start[0] + dst.S[0]) / 2, max(1.8, _width(f['box']))
+                d += dsp.Arrow().at((start[0], y)).tox(mid + w / 2)
+                d += (b := dsp.Box(w=w, h=0.9 if '\n' not in str(f['box']) else 1.3).anchor('E').at((mid + w / 2, y)).label(str(f['box']), fontsize=10))
                 d += dsp.Line().at(b.W).tox(dst.S[0])
             else: d += dsp.Line().at((start[0], y)).tox(dst.S[0])
             d += dsp.Arrow().at((dst.S[0], y)).to(dst.S)
@@ -138,9 +142,10 @@ def logic(spec, out):
     return out
 
 
+FONT = 'Arial'
 THEME = ('%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#F0EBFA", "primaryBorderColor": "#4D2A87", '
          '"primaryTextColor": "#1F1A2E", "lineColor": "#6B6480", "secondaryColor": "#FFF6CC", "tertiaryColor": "#FFFFFF", '
-         '"fontFamily": "Poppins, DejaVu Sans, sans-serif", "fontSize": "15px"}}}%%\n')
+         '"fontFamily": "Arial", "fontSize": "15px"}}}%%\n')       # a face the painter has a metric-compatible copy of, so the layout's text sizes are close
 
 
 def mermaid(spec, out):
@@ -155,13 +160,34 @@ def mermaid(spec, out):
     width = int(min(max(float(spec.get('width', 1600)), 600), 2200))
     try:
         import mmdr
-        png = mmdr.render(code).png(width=width)
+        png = _paint(_fit_labels(mmdr.render(code).svg()), width)
     except ImportError: png = _kroki(code)            # no offline renderer installed: the public one (only the diagram text is sent)
     except Exception as e:
         raise ValueError(f'the Mermaid code does not parse: {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}')
     im = PI.open(io.BytesIO(png))
     im.save(out, dpi=(DPI, DPI))
     return out
+
+
+def _fit_labels(svg):
+    """The layout sizes each edge label's backing box with its own estimate of the text width, and the painter's font is wider, so
+    the text sticks out of the box (and off the canvas). Measure each label with the painter's own font and shrink it to its box."""
+    import html
+    import novasvg.fonts as F
+    face = F.get_font_face_for_family_stack(FONT)
+    def fit(m):
+        box, text = float(m['w']), html.unescape(m['text'])
+        wide = F.Font(face, float(m['size'])).measure_text(text)
+        size = float(m['size']) * min(1, (box - 6) / wide) if wide else float(m['size'])
+        return m['head'] + f'font-size:{round(max(size, 9), 1):g}px' + m['tail']
+    return re.sub(r'(?P<head><rect x="[^"]*" y="[^"]*" width="(?P<w>[\d.]+)"[^>]*/><text[^>]*style="[^"]*?)font-size:(?P<size>[\d.]+)px(?P<tail>[^"]*"[^>]*>(?P<text>[^<]*)</text>)', fit, svg)
+
+
+def _paint(svg, width):
+    import novasvg
+    doc = novasvg.Document.load_from_data(svg)
+    if doc is None: raise ValueError('the Mermaid diagram could not be drawn')
+    return doc.render_to_bitmap(width, -1, novasvg.Color(0, 0, 0, 0)).to_png()
 
 
 def _kroki(code):

@@ -117,3 +117,17 @@ def test_subscripts_typed_as_text_become_maths():
     assert TEX.plain('P_i^sat') == '$P_i^{sat}$'
     assert TEX.plain('snake_case, k_means and name_final.pdf stay') == 'snake_case, k_means and name_final.pdf stay'
     assert TEX.plain('already $x_i$ in maths') == 'already $x_i$ in maths'
+
+
+def test_a_flowchart_label_is_shrunk_to_its_box_and_a_short_one_is_left_alone():
+    import fig_diagrams as D
+    svg = lambda w, t: f'<rect x="0" y="0" width="{w}" height="22.5" fill="#FFF6CC"/><text x="50" y="5" style="text-anchor:middle;font-size:15px;font-family:Arial">{t}</text>'
+    assert 'font-size:15px' not in D._fit_labels(svg(80, 'scheduler dispatches the process'))       # far wider than its box
+    assert 'font-size:15px' in D._fit_labels(svg(300, 'I/O'))
+
+
+def test_block_diagram_boxes_and_arrows_grow_with_their_labels(tmp_path):
+    import fig_diagrams as D
+    assert D._width('Sensor and signal conditioner H(s)') > D._width('H(s)') and D._width('a\nlonger line') == D._width('longer line')
+    figures.render('block', {'chain': [{'el': 'in', 'label': 'r'}, {'el': 'sum', 'id': 's'}, {'el': 'box', 'id': 'p', 'label': 'Plant', 'edge': 'a long arrow label here'}, {'el': 'out', 'label': 'y'}],
+                             'feedback': [{'from': 'p', 'to': 's', 'box': 'Sensor and signal conditioner H(s)', 'sign': '−'}]}, str(tmp_path / 'b.png'))
