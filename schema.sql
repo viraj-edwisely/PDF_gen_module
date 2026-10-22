@@ -52,6 +52,7 @@ create index if not exists events_at on events (at);
 alter table runs add column if not exists title text;                          -- the topic names, for the run list
 alter table books add column if not exists progress real default 0;            -- background processing of uploads
 alter table books add column if not exists step text;
+alter table books add column if not exists kind text not null default 'textbook';   -- textbook (the source of a run) or handbook (a coverage reference)
 alter table run_topics add column if not exists quality jsonb;                -- the quality report of the finished PDF (Runs page)
 
 create table if not exists feedback (               -- what reviewers marked on a PDF: by category and page, the source of new checks and tests

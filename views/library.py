@@ -6,11 +6,15 @@ import db
 from config import MAX_BOOK_MB
 from ui import can_manage, user
 
+KINDS = {'textbook': 'Textbook', 'handbook': 'Reference handbook'}
+
 st.title('Library')
 st.caption('Upload a textbook once. Everyone on the team can generate PDFs from it. Processing runs in the background: you can leave this page.')
 
 with st.form('upload', clear_on_submit=True):
     pdf = st.file_uploader('Book PDF', type='pdf')
+    kind = st.radio('Type', list(KINDS), format_func=KINDS.get, horizontal=True,
+                    help='Textbook: the source a PDF is written from. Reference handbook: only used to check that the plan covers everything standard on a topic; nothing is copied from it.')
     c1, c2, c3 = st.columns(3)
     title, subject, paper = c1.text_input('Title'), c2.text_input('Subject (e.g. Operating System)'), c3.text_input('GATE paper code (optional, e.g. CS)')
     submitted = st.form_submit_button('Upload')
@@ -22,8 +26,8 @@ if submitted:
         dup = db.sql('select title from books where file_hash=%s', (digest,))
         if dup: st.error(f'This PDF is already in the library as "{dup[0]["title"]}".')
         else:
-            book_id = db.sql("insert into books (title, subject, paper, file_hash, uploaded_by, status, step) values (%s,%s,%s,%s,%s,'uploading','Uploading') returning id",
-                             (title, subject, paper.upper() or None, digest, user()))[0]['id']
+            book_id = db.sql("insert into books (title, subject, paper, kind, file_hash, uploaded_by, status, step) values (%s,%s,%s,%s,%s,%s,'uploading','Uploading') returning id",
+                             (title, subject, paper.upper() or None, kind, digest, user()))[0]['id']
             try:
                 with st.spinner('Uploading...'): db.upload('books', f'{book_id}.pdf', data, 'application/pdf')
                 db.sql("update books set storage_path=%s, status='queued', step='Waiting' where id=%s", (f'{book_id}.pdf', book_id))
@@ -38,7 +42,9 @@ def book_list():
     if not books: st.info('No books yet.'); return
     for b in books:
         icon = {'ready': '✅', 'failed': '❌'}.get(b['status'], '⏳')
-        with st.expander(f"{icon} {b['title']} · {b['subject']}" + (f" · {b['page_count']} pages" if b['page_count'] else ''), expanded=b['status'] not in ('ready', 'failed')):
+        with st.expander(f"{icon} {b['title']} · {b['subject']} · {KINDS[b['kind']]}" + (f" · {b['page_count']} pages" if b['page_count'] else ''), expanded=b['status'] not in ('ready', 'failed')):
+            kind = st.selectbox('Type', list(KINDS), index=list(KINDS).index(b['kind']), format_func=KINDS.get, key=f"kind{b['id']}")
+            if kind != b['kind']: db.sql('update books set kind=%s where id=%s', (kind, b['id'])); st.rerun()
             st.caption(f"Uploaded by {b['uploaded_by']} on {b['created_at']:%d %b %Y}" + (f" · paper {b['paper']}" if b['paper'] else ''))
             if b['status'] in ('queued', 'processing', 'uploading'):
                 st.progress(float(b['progress'] or 0), b['step'] or 'Waiting')

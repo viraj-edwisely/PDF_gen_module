@@ -21,7 +21,8 @@ effort = c2.select_slider('Thinking level', EFFORTS, value=DEFAULT_EFFORT,
 
 # 2. source
 st.subheader('2 · Source')
-books = db.sql("select * from books where status='ready' order by title")
+books = db.sql("select * from books where status='ready' and kind='textbook' order by title")
+handbooks = db.sql("select * from books where status='ready' and kind='handbook' order by title")
 book = st.selectbox('Book (optional)', [None] + books, format_func=lambda b: 'No book: the writer uses its own knowledge' if b is None else f"{b['title']} ({b['subject']})",
                     help='With a book, the content follows it. Without one, the writer works from the topic names alone. Upload books on the Library page.')
 start = end = None
@@ -37,7 +38,7 @@ if book:
         c1, c2 = st.columns(2)
         start = c1.number_input('First page (printed page number)', 1, last, 1)
         end = c2.number_input('Last page', 1, last, last)
-reference = st.selectbox('Reference handbook (optional, GATE)', [None] + books, format_func=lambda b: 'None' if b is None else f"{b['title']} ({b['subject']})",
+reference = st.selectbox('Reference handbook (optional, GATE)', [None] + handbooks, format_func=lambda b: 'None' if b is None else f"{b['title']} ({b['subject']})",
                          help='A coaching handbook or standard text used only to check that the plan covers everything standard on the topic and '
                               'uses the standard figures. Its text, examples and questions are never copied.') if mode == 'gate' else None
 default = book or {'paper': '', 'subject': ''}
