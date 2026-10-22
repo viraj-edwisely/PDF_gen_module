@@ -1,5 +1,5 @@
 """Illustrations page: the library of pictures of real apparatus. A new picture is used in PDFs at once with an "Unreviewed" tag until a
-person approves it here; a rejected picture is never used. Anyone signed in may approve or reject; who did it is recorded."""
+person approves it here; a rejected picture is never used. Anyone signed in may approve, reject or delete; who did it is recorded."""
 import io, os, sys
 import streamlit as st
 from PIL import Image
@@ -26,6 +26,13 @@ def decide(concept, status, note):
     db.event(user(), f'illustration {status}', concept=concept)
 
 
+def remove(r):
+    db.sql('delete from illustrations where concept=%s', (r['concept'],))
+    try: db.remove('illustrations', [r['path']])
+    except Exception: pass                      # the row is gone either way: a missing file is harmless
+    db.event(user(), 'illustration deleted', concept=r['concept'])
+
+
 st.title('Illustrations')
 st.caption('Pictures for what students must recognise (an engine, a pump, tray types, a heat-exchanger cut-away). Each concept is drawn once, checked by the model, '
            'numbered by the app and used in PDFs at once with an Unreviewed tag. Check that each number sits on the right part and that the apparatus is drawn correctly, '
@@ -45,6 +52,9 @@ for r in (r for r in rows if r['status'] in want):
         if r['review']: c2.info(f"Check: {r['review']}")
         if r['reviewed_by']: c2.caption(f"{STATUS.get(r['status'], r['status'])} by {r['reviewed_by']} on {r['reviewed_at']:%d %b %Y}")
         note = c2.text_input('Note (optional)', key=f"note{r['concept']}")
-        b1, b2 = c2.columns(2)
+        b1, b2, b3 = c2.columns(3)
         if r['status'] != 'approved' and b1.button('Approve', key=f"ok{r['concept']}", type='primary'): decide(r['concept'], 'approved', note); st.rerun()
         if r['status'] != 'rejected' and b2.button('Reject', key=f"no{r['concept']}"): decide(r['concept'], 'rejected', note); st.rerun()
+        with b3.popover('Delete'):
+            st.caption('Removes the picture for good. A later PDF that needs this concept can draw it again (about $0.05).')
+            if st.button('Yes, delete it', key=f"del{r['concept']}", type='primary'): remove(r); st.rerun()
