@@ -99,6 +99,15 @@ def split_topic(text, subtopics=''):
     return text, parts(subtopics or '')
 
 
+def pdf_filename(options, name):
+    """<Paper>_<Subject>_Unit_<n>_Topic_<n>_<Topic name>.pdf, e.g. CS_OperatingSystem_Unit_1_Topic_1_System Calls and User Kernel Mode.pdf.
+    Runs without unit and topic numbers (Non-GATE, or made before they existed) get the topic name alone."""
+    num = (options.get('numbers') or {}).get(name)
+    if not num or not options.get('paper'): return (re.sub(r'\W+', '_', name).strip('_')[:80] or 'topic') + '.pdf'
+    topic = ' '.join(re.sub(r'[\\/:*?"<>|\x00-\x1f]', ' ', name).split())[:100]
+    return f"{options['paper']}_{re.sub(r'[^A-Za-z0-9]+', '', options.get('subject', ''))}_Unit_{num['unit']}_Topic_{num['topic']}_{topic}.pdf"
+
+
 # ---------------------------------------------------------------- tidy: fix predictable slips in code
 def clean(x):
     """NUL characters out (the database refuses them); 'GATE 2027'-style target years out of printed text; escapes such as

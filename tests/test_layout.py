@@ -37,6 +37,12 @@ def test_subtopics_are_split_from_the_title():
     assert C.split_topic('Rankine cycle', 'Reheat; Regeneration') == ('Rankine cycle', ['Reheat', 'Regeneration'])
 
 
+def test_pdf_file_name_follows_the_pattern():
+    o = {'paper': 'CS', 'subject': 'Operating System', 'numbers': {'System Calls and User Kernel Mode': {'unit': 1, 'topic': 1}}}
+    assert C.pdf_filename(o, 'System Calls and User Kernel Mode') == 'CS_OperatingSystem_Unit_1_Topic_1_System Calls and User Kernel Mode.pdf'
+    assert C.pdf_filename(o, 'Older: run/topic') == 'Older_run_topic.pdf'          # no numbers: the topic name alone
+
+
 def test_leaks_in_the_finished_text_are_found():
     leak = R.LEAK.search
     assert leak(r'I = 20.48 \times 10^6') and leak('mm^4') and leak('"type": "para"') and leak('Answer: None')

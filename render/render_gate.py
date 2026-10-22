@@ -74,7 +74,6 @@ def revision_page(rev, notes, notes_no):
 def main():
     c = printable(json.load(open(sys.argv[1], encoding='utf-8'))); out = sys.argv[2]
     paper = c.get('paper', '').upper()
-    footer_txt = f"GATE Readiness Programme · {paper} · {c.get('subject', '')}"
     logo_w = LOGO_WHITE
 
     def first(cv, doc):
@@ -82,7 +81,7 @@ def main():
         cv.setFillColor(PURPLE); cv.rect(0, H - band, W, band, stroke=0, fill=1)
         lw = 34 * mm; cv.drawImage(logo_w, M, H - 19 * mm, lw, lw * 262 / 644, mask='auto')
         cv.setFillColor(YEL); cv.rect(M, H - band + 5 * mm, 26 * mm, 2.2 * mm, stroke=0, fill=1)
-        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, fit('Edwisely · ' + footer_txt, 'Body', 7.5, W - 2 * M - 50))
+        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, 'Edwisely · GATE Readiness Programme')
         cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}'); cv.restoreState()
 
     def later(cv, doc):
@@ -95,7 +94,6 @@ def main():
         cv.setFont('HeadR', 8); cv.drawRightString(W - M, H - 6 * mm, fit(plain(c['topic_name']), 'HeadR', 8, room - left_w))
         cv.setStrokeColor(LINE); cv.line(M, 14 * mm, W - M, 14 * mm)
         cv.setFont('Body', 7.5); cv.setFillColor(GREY)
-        cv.drawString(M, 10 * mm, fit(footer_txt, 'Body', 7.5, W / 2 - 45 - M) if c.get('contents', True) else footer_txt)
         cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}')
         if c.get('contents', True):                       # clickable link back to the contents page
             cv.setFont('HeadM', 7.5); cv.setFillColor(PURPLE); lab = 'Back to contents'

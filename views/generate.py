@@ -53,6 +53,11 @@ ids = st.session_state.setdefault('topic_ids', [0])
 def add_topic(): st.session_state.topic_ids.append(max(st.session_state.topic_ids) + 1)
 def remove_topic(i): st.session_state.topic_ids.remove(i)
 
+def number(v):
+    """A unit or topic number from a sheet cell ("2", "2.0"), or None when empty or not 1-99."""
+    try: return n if 1 <= (n := int(float(v))) <= 99 else None
+    except (TypeError, ValueError): return None
+
 def import_topics():
     """Fill the topic rows (and the subject) from the uploaded sheet: empty rows are replaced, filled ones kept."""
     s = st.session_state
@@ -61,13 +66,17 @@ def import_topics():
         df = pd.read_excel(s.topics_file, dtype=str).rename(columns=lambda c: str(c).strip().lower())
         sheet = [t.strip() for t in df['topic'].dropna() if t.strip()]
         subs = {str(t).strip(): str(x).strip() for t, x in zip(df['topic'], df.get('subtopics', pd.Series([''] * len(df)))) if isinstance(t, str) and isinstance(x, str)}
+        blank = pd.Series([''] * len(df))
+        nums = {t.strip(): (number(u), number(n)) for t, u, n in zip(df['topic'], df.get('unit no', blank), df.get('topic no', blank)) if isinstance(t, str)}
     except Exception as e:
         s.import_msg = ('error', f'The sheet could not be read: it needs a column named Topic ({e}).'); return
     keep = [i for i in s.topic_ids if s.get(f'topic{i}', '').strip()]
     have = {s[f'topic{i}'].strip() for i in keep}
     new = [t for t in dict.fromkeys(sheet) if t not in have][:MAX_TOPICS - len(keep)]
     first = max(s.topic_ids) + 1
-    for k, t in enumerate(new): s[f'topic{first + k}'], s[f'sub{first + k}'] = t, subs.get(t, '')
+    for k, t in enumerate(new):
+        s[f'topic{first + k}'], s[f'sub{first + k}'] = t, subs.get(t, '')
+        s[f'unit{first + k}'], s[f'tnum{first + k}'] = nums.get(t, (None, None))
     s.topic_ids = keep + list(range(first, first + len(new))) or [first]
     subjects = [x.strip() for x in df.get('subject', pd.Series(dtype=str)).dropna() if x.strip()]
     if subjects: s.subject = subjects[0]
@@ -75,21 +84,25 @@ def import_topics():
     s.import_msg = ('success', f'Added {len(new)} topic(s) from the sheet' + (f'; {skipped} skipped (already listed, or more than {MAX_TOPICS} in all).' if skipped else '.'))
 
 with st.expander('Import topics from an Excel sheet'):
-    st.caption('One row per topic, with the columns **Subject**, **Topic** and **Subtopics** (Subject and Subtopics are optional; '
-               'the first subject fills in the Subject field below; subtopics are separated by commas).')
+    st.caption('One row per topic, with the columns **Subject**, **Unit No**, **Topic No**, **Topic** and **Subtopics** (Subject and Subtopics are optional; '
+               'the first subject fills in the Subject field below; subtopics are separated by commas). GATE PDFs are named from the unit and topic numbers.')
     c1, c2 = st.columns([3, 1], vertical_alignment='bottom')
     c1.file_uploader('Topics sheet (.xlsx)', type='xlsx', key='topics_file', on_change=import_topics)
     template = io.BytesIO()
-    pd.DataFrame(columns=['Subject', 'Topic', 'Subtopics']).to_excel(template, index=False)
+    pd.DataFrame(columns=['Subject', 'Unit No', 'Topic No', 'Topic', 'Subtopics']).to_excel(template, index=False)
     c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
     if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
-names, sources, subtopics = [], {}, {}      # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions
+names, sources, subtopics, numbers = [], {}, {}, {}      # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions; numbers: topic -> unit and topic number
 for k, i in enumerate(ids, 1):
-    cols = st.columns([6, 3, 1] if mode == 'gate' else [9, 1], vertical_alignment='bottom')
-    name = cols[0].text_input(f'Topic {k}', key=f'topic{i}', placeholder='e.g. Addressing modes and effective address').strip()
-    kind = cols[1].segmented_control('PYQ source (optional)', ['PDF', 'Word', 'Links'], key=f'pyqkind{i}',
-                                     help='Previous-year GATE questions for this topic. Only questions whose exact text is found in the source are used.') if mode == 'gate' else None
-    if len(ids) > 1: cols[-1].button('✕', key=f'remove{i}', on_click=remove_topic, args=(i,), help='Remove this topic')
+    if mode == 'gate': unit_col, num_col, name_col, kind_col, remove_col = st.columns([1.3, 1.3, 5, 3, 1], vertical_alignment='bottom')
+    else: name_col, remove_col = st.columns([9, 1], vertical_alignment='bottom')
+    name = name_col.text_input(f'Topic {k}', key=f'topic{i}', placeholder='e.g. Addressing modes and effective address').strip()
+    kind = kind_col.segmented_control('PYQ source (optional)', ['PDF', 'Word', 'Links'], key=f'pyqkind{i}',
+                                      help='Previous-year GATE questions for this topic. Only questions whose exact text is found in the source are used.') if mode == 'gate' else None
+    if mode == 'gate':
+        unit_no = unit_col.number_input('Unit no.', 1, 99, value=None, step=1, key=f'unit{i}', help='Used in the PDF file name: CS_Subject_Unit_1_Topic_1_Topic name.pdf')
+        topic_no = num_col.number_input('Topic no.', 1, 99, value=None, step=1, key=f'tnum{i}')
+    if len(ids) > 1: remove_col.button('✕', key=f'remove{i}', on_click=remove_topic, args=(i,), help='Remove this topic')
     got = []
     if kind == 'Links':
         got = [u.strip() for u in st.text_area(f'Links for topic {k} (web pages or PDFs, one per line)', key=f'pyqurls{i}', height=68).splitlines() if u.strip()]
@@ -102,13 +115,14 @@ for k, i in enumerate(ids, 1):
     if name and subs: st.caption(f'Title: **{name}** · covers {len(subs)} subtopic{"s" if len(subs) != 1 else ""}: ' + ', '.join(subs))
     if name and name not in names: names.append(name)
     if name and subs: subtopics[name] = subs
+    if name and mode == 'gate': numbers.setdefault(name, {'unit': unit_no, 'topic': topic_no})
     if name and got: sources.setdefault(name, (kind, got))
 topics = names
 st.button('＋ Add a topic', on_click=add_topic, disabled=len(ids) >= MAX_TOPICS)
 
 # 4. details
 st.subheader('4 · Details')
-options = {'topics': topics, 'subtopics': subtopics, 'reference_book': reference['id'] if reference else None}
+options = {'topics': topics, 'subtopics': subtopics, 'reference_book': reference['id'] if reference else None, 'numbers': numbers}
 if mode == 'gate':
     c1, c2 = st.columns([1, 3])
     options['paper'] = c1.text_input('GATE paper code', key='paper', placeholder='CS').strip().upper()
@@ -156,6 +170,8 @@ if len(topics) > MAX_TOPICS: errors.append(f'At most {MAX_TOPICS} topics per run
 if book and start > end: errors.append('The first page is after the last page.')
 if mode == 'gate':
     if not options['paper']: errors.append('Enter the GATE paper code (for example CS).')
+    if any(None in n.values() for n in numbers.values()): errors.append('Enter the unit number and topic number of every topic.')
+    elif len({tuple(n.values()) for n in numbers.values()}) < len(numbers): errors.append('Two topics have the same unit and topic number.')
     if any(len(got) > MAX_URLS for _, got in sources.values()): errors.append(f'At most {MAX_URLS} PYQ links or files per topic.')
     if any(kind == 'Links' and not u.startswith(('http://', 'https://')) for kind, got in sources.values() for u in got): errors.append('PYQ links must start with http:// or https://')
 if not options['subject']: errors.append('Enter the subject.')

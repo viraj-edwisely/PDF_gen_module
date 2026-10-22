@@ -12,7 +12,7 @@ FEEDBACK = ['Teaching (flow, simplicity, coverage)', 'Maths or units', 'Figure',
 TOPIC_CHIP = {'queued': '⏳ Waiting', 'running': '⚙️ Working', 'done': '✅ Ready', 'warnings': '✅ Ready · notes to review', 'failed': '❌ Failed', 'stopped': '⛔ Stopped'}
 RUN_STATUS = {'queued': 'Waiting', 'running': 'Working', 'done': 'Done', 'partial': 'Partly failed', 'failed': 'Failed',
               'stopped': 'Stopped (cost cap)', 'cancelled': 'Cancelled', 'interrupted': 'Interrupted'}
-HEADER = ['Topic', 'File', 'Mode', 'Writer', 'Status', 'Cost (USD)', 'PYQs', 'Practice', 'Sample paper Q', 'Worked examples', 'Figures', 'Notes']
+HEADER = ['Topic', 'Unit No', 'Topic No', 'File', 'Mode', 'Writer', 'Status', 'Cost (USD)', 'PYQs', 'Practice', 'Sample paper Q', 'Worked examples', 'Figures', 'Notes']
 LIST_SQL = """select r.*, extract(epoch from now() - r.heartbeat_at) as age, count(t.id) as n,
                      count(t.id) filter (where t.status in ('done', 'warnings')) as ready, count(t.id) filter (where t.status = 'failed') as bad
               from runs r left join run_topics t on t.run_id = r.id group by r.id order by r.id desc limit 300"""
@@ -57,9 +57,11 @@ def build_zip(run, topics):
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
         for t in (t for t in topics if t['pdf_path']):
             c = json.loads(fetch(t['json_path']))
-            name = f"{t['position'] + 1:02d}_" + (re.sub(r'[^\w]+', '_', t['name']).strip('_')[:80] or 'topic') + '.pdf'   # numbered: no two topics share a name
+            name = C.pdf_filename(run['options'], t['name'])
+            if name in z.namelist(): name = f"{t['position'] + 1:02d}_{name}"                  # no two PDFs share a name
             z.writestr(name, fetch(t['pdf_path']))
-            ws.append([t['name'], name, run['mode'], run['model'], t['status'], float(t['cost_usd']), len(c.get('pyqs', [])), len(c.get('practice', [])),
+            num = (run['options'].get('numbers') or {}).get(t['name'], {})
+            ws.append([t['name'], num.get('unit'), num.get('topic'), name, run['mode'], run['model'], t['status'], float(t['cost_usd']), len(c.get('pyqs', [])), len(c.get('practice', [])),
                        len((c.get('sample_paper') or {}).get('questions', [])), count(c, ('example', 'worked_example')), count(c, ('figure',)), '; '.join(t['warnings'])])
         index = io.BytesIO(); wb.save(index); z.writestr('INDEX.xlsx', index.getvalue())
     return buf.getvalue()
@@ -80,7 +82,7 @@ def topic_card(run, t):
                 st.markdown('\n'.join(f'- {w}' for w in t['warnings']))
         if not t['pdf_path']: return
         c1, c2, c3 = st.columns([1, 1, 2])
-        stem = re.sub(r'\W+', '_', t['name']).strip('_')
+        stem = C.pdf_filename(run['options'], t['name'])[:-4]
         c1.download_button('⬇ Download PDF', fetch(t['pdf_path']), file_name=stem + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary',
                            on_click=db.event, args=(user(), 'downloaded', run['id']), kwargs={'file': stem + '.pdf'})
         c2.download_button('Download JSON', fetch(t['json_path']), file_name=stem + '.json', key=f"json{t['id']}")

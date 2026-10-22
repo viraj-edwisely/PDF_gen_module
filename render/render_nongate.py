@@ -112,7 +112,7 @@ def main():
         cv.saveState(); cv.setFillColor(PURPLE); cv.setFont('HeadM', 8); cv.drawRightString(W - M, H - 11 * mm, fit(plain(title).upper(), 'HeadM', 8, TW - 40 * mm))
         cv.setStrokeColor(PURPLE); cv.setLineWidth(0.6); cv.line(M, H - 14 * mm, W - M, H - 14 * mm)
         cv.setStrokeColor(LINE); cv.setLineWidth(0.5); cv.line(M, 14 * mm, W - M, 14 * mm)
-        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawString(M, 10 * mm, fit(plain(title), 'Body', 7.5, W / 2 - 45 - M)); cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}')
+        cv.setFont('Body', 7.5); cv.setFillColor(GREY); cv.drawRightString(W - M, 10 * mm, f'Page {doc.page}')
         cv.setFont('HeadM', 7.5); cv.setFillColor(PURPLE); lab = 'Back to contents'; tw = cv.stringWidth(lab, 'HeadM', 7.5); x0 = W / 2 - tw / 2
         cv.drawString(x0, 10 * mm, lab); cv.linkRect('', 'contents', (x0 - 2, 8.5 * mm, x0 + tw + 2, 13 * mm), relative=0, thickness=0); cv.restoreState()
 
