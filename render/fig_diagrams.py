@@ -204,8 +204,8 @@ def illustration(spec, out):
     A picture for what a student must recognise rather than read values from: real apparatus and cut-aways (an IC
     engine, a centrifugal pump, a Pelton wheel, a lathe, a casting mould, a test rig, tray types, a heat-exchanger cut-away).
     Never for flowsheets, graphs, diagrams with numbers, circuits or anything drawn to scale. The app takes it from its library; a new
-    concept is drawn once (only when the run allows new pictures), with no check or redraw. Until a person approves it, the
-    picture carries an "Unreviewed" tag."""
+    concept is drawn once (only when the run allows new pictures), with no check or redraw. For a question, every value the
+    student needs is in the question text: the picture only shows the arrangement."""
     import matplotlib.pyplot as plt
     from PIL import Image as PI
     from figstyle import save
@@ -217,7 +217,6 @@ def illustration(spec, out):
     w = 6.2; h = w * im.height / im.width
     fig = plt.figure(figsize=(w, h + 0.24 * rows + 0.3))
     ax = fig.add_axes([0, (0.24 * rows + 0.3) / (h + 0.24 * rows + 0.3), 1, h / (h + 0.24 * rows + 0.3)]); ax.imshow(im); ax.axis('off')
-    if spec.get('unreviewed'): ax.text(0.01, 0.98, 'UNREVIEWED', transform=ax.transAxes, va='top', fontsize=7.5, color='#7A5200', bbox=dict(boxstyle='round,pad=0.3', fc='#FFF1BF', ec='#D9A400'))
     for k, p in enumerate(parts):
         col_, row = k // rows if rows else 0, k % rows if rows else 0
         fig.text(0.04 + 0.5 * col_, (0.24 * (rows - row) + 0.05) / (h + 0.24 * rows + 0.3), f'{k + 1}  {p}', fontsize=9, color=INK)

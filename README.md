@@ -48,6 +48,9 @@ python tests/stress_pdf.py stress.pdf    # after a renderer change: every formul
 ## Measuring quality
 - Every GATE PDF gets a **quality report** (Runs page): pages, subtopics covered, prose per section, worked examples with
   steps, figures (and how many are computed from physics), raw maths left on a page, mostly empty pages, notes to review.
+- **Change this PDF** (Runs page): *Change only this* sends the saved content and the request to the model once; it returns replacements for just the items
+  the request touches, which are put in and the PDF is drawn again (`pipeline.edit`, `prompts/edit.md`). It is a new run; the old PDF is kept. *Write the whole
+  PDF again* repeats the full process with the text as an extra instruction.
 - Reviewers add **feedback** on each PDF (kind of problem, page, comment); "All reviewer feedback" on the Runs page lists and
   exports it. Each new kind of problem becomes a test in `tests/` and, where possible, a new automatic check.
 - **Golden set**: `python tools/eval.py start` makes one run per topic of `tools/eval_topics.json` (12 topics across papers),
@@ -55,7 +58,7 @@ python tests/stress_pdf.py stress.pdf    # after a renderer change: every formul
   `python tools/eval.py compare A B` shows what changed. A prompt change ships only if no criterion gets worse.
 - Options on the Generate page: **Visual review of figures and pages** (the model looks at every drawn figure and page; wrong
   figures go back to the writer once) and **Draw new illustrations** (GPT Image, once per concept, one call, no check or redraw, approved on the
-  Illustrations page before use; the model ID and price are in `config.py`: confirm the price before switching it on).
+  Illustrations page (PDFs use a new picture at once, with no tag); the model ID and price are in `config.py`: confirm the price before switching it on).
 
 ## How it works (short)
 - `ingest.py`: book PDF → page text, units, chunks, embeddings (Postgres + pgvector). `retrieve.py`: scope + topic → book text for the model (a scope up to 16k tokens is sent whole; a larger one is searched, and each GATE notes call searches its own planned sections).

@@ -63,23 +63,30 @@ def test_a_pdf_uses_approved_and_waiting_pictures_and_leaves_out_the_rest(librar
     job, c = Job(), content('engine', 'pump', 'lathe', 'missing')
     c, folder = review.illustrations(job, c, False)
     figs = [b['spec'] for b in c['notes'][0]['blocks']]
-    assert [f['concept'] for f in figs] == ['engine', 'pump'] and not figs[0]['unreviewed'] and figs[1]['unreviewed']
+    assert [f['concept'] for f in figs] == ['engine', 'pump']
     assert os.path.exists(figs[0]['file']) and figs[0]['parts'] == PARTS
-    assert any('Unreviewed' in w for w in job.warnings) and any('rejected' in w for w in job.warnings) and any('not in the library' in w for w in job.warnings)
+    assert any('waiting for approval' in w for w in job.warnings) and any('rejected' in w for w in job.warnings) and any('not in the library' in w for w in job.warnings)
 
 
 def test_a_new_concept_is_drawn_once_without_a_check_and_used_at_once_when_allowed(library, monkeypatch):
     f = library()
     drawn = []
-    monkeypatch.setattr(llm, 'generate_image', lambda text: (drawn.append(text) or png(), 0.05))
+    monkeypatch.setattr(llm, 'generate_image', lambda text: (drawn.append(text) or png(), 0.02))
     monkeypatch.setattr(llm, 'generate_json', lambda *a, **k: pytest.fail('a picture is not checked by a model'))
     job = Job()
     c, folder = review.illustrations(job, content('engine'), True)
     spec = c['notes'][0]['blocks'][0]['spec']
-    assert len(drawn) == 1 and f.rows['engine']['status'] == 'pending' and spec['unreviewed'] and os.path.exists(spec['file'])
-    assert job.charged == pytest.approx(0.05)
+    assert len(drawn) == 1 and f.rows['engine']['status'] == 'pending' and 'unreviewed' not in spec and os.path.exists(spec['file'])
+    assert job.charged == pytest.approx(0.02)
     _, none = review.illustrations(Job(), content('pump'), False)                                      # not allowed: nothing is drawn
     assert 'pump' not in f.rows and len(drawn) == 1
+
+
+def test_a_stored_picture_is_at_most_1024_pixels_wide(library, monkeypatch):
+    f = library()
+    monkeypatch.setattr(llm, 'generate_image', lambda text: (png((1536, 1024)), 0.02))
+    review.illustrations(Job(), content('engine'), True)
+    assert Image.open(io.BytesIO(f.files['engine.png'])).width == 1024
 
 
 def test_the_picture_prompt_asks_for_numbered_parts_and_no_other_text():
@@ -87,7 +94,7 @@ def test_the_picture_prompt_asks_for_numbered_parts_and_no_other_text():
     assert '1. Piston; 2. Inlet valve; 3. Spark plug' in p and 'only text' in p
 
 
-def test_an_illustration_with_the_tag_draws(tmp_path):
+def test_an_illustration_draws(tmp_path):
     f = tmp_path / 'engine.png'; f.write_bytes(png())
-    out = figures.render('illustration', {'concept': 'engine', 'title': 'Engine', 'parts': PARTS, 'file': str(f), 'unreviewed': True})
+    out = figures.render('illustration', {'concept': 'engine', 'title': 'Engine', 'parts': PARTS, 'file': str(f)})
     assert os.path.getsize(out) > 5000

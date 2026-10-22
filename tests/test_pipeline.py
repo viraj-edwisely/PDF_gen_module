@@ -23,9 +23,11 @@ class FakeDB:
         if q.startswith('update run_topics set quality'): self.quality = json.loads(args[0]); return []
         if 'returning cost_usd' in q: return [{'cost_usd': 0, 'cost_cap': 5}]
         if q.startswith('select * from illustrations'): return []
+        if q.startswith('select json_path'): return [{'json_path': self.json_path}]
         return []
 
     def upload(self, bucket, path, data, ctype=''): self.files[path] = data
+    def download(self, bucket, path): return self.files[path]
     def event(self, *a, **k): pass
 
 
@@ -54,6 +56,8 @@ def reply_for(user):
                 'traps': EX['traps']}           # questions written the current way: the working as "steps", no "solution"
     if 'Write the revision page' in user:
         return {'rows': [{'section': h, 'idea': 'one line', 'formula': 'WT = TAT - BT', 'rule': 'r', 'trap': 't'} for h in SECTIONS], 'flow': ['A -> B']}
+    if 'A finished PDF has to be changed' in user:
+        return {'summary': 'Reworded the first intuition.', 'fixes': [{'ref': 'notes/0/blocks/0', 'value': {'type': 'para', 'text': 'Changed intuition.'}}, {'ref': 'notes/99/blocks/0', 'value': 'x'}]}
     if 'checking the figures' in user or 'checking the layout' in user: return {'issues': []}
     if 'reviewing a GATE topic PDF' in user: return {'issues': [], 'weak': []}
     return {}
@@ -88,3 +92,17 @@ def test_gate_pipeline_end_to_end(fake):
     assert len(content['practice']) == len(EX['practice']) and all(q['steps'] for q in content['practice'])
     assert not [w for w in fake.warnings if 'raw maths' in w or 'could not be drawn' in w], fake.warnings
     assert not fake.quality['sections_without_figure'] and not [w for w in fake.warnings if 'asks for a figure' in w]    # figures inside steps count
+
+
+def test_a_requested_change_rewrites_only_what_was_asked_in_one_call(fake):
+    run = {'id': 1, 'mode': 'gate', 'book_id': None, 'scope_start': None, 'scope_end': None, 'created_by': 'a@b.c',
+           'options': {'paper': 'CS', 'subject': 'Operating Systems', 'subtopics': {'CPU scheduling': ['FCFS', 'SJF']}, 'verify': True, 'visual_review': False}}
+    pipeline.process({'id': 7, 'name': 'CPU scheduling'}, run)
+    before = json.loads(fake.files['1/7.json'])
+    fake.json_path, fake.steps, fake.warnings, n = '1/7.json', {}, [], len(fake.calls)
+    pipeline.process({'id': 8, 'name': 'CPU scheduling'}, {**run, 'id': 2, 'options': {**run['options'], 'edit': {'from': 7, 'request': 'reword the first intuition'}}})
+    after = json.loads(fake.files['2/8.json'])
+    assert len(fake.calls) == n + 1                                                       # one call: no plan, notes, questions or review
+    assert after['notes'][0]['blocks'][0] == {'type': 'para', 'text': 'Changed intuition.'}
+    assert after['notes'][1:] == before['notes'][1:] and after['practice'] == before['practice'] and after['notes'][0]['blocks'][1:] == before['notes'][0]['blocks'][1:]
+    assert any(w.startswith('Changed: Section') for w in fake.warnings) and any('notes/99/blocks/0' in w and 'not applied' in w for w in fake.warnings)

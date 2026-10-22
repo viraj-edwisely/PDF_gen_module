@@ -33,4 +33,5 @@ For every question
   conceptual question may use a one- or two-sentence "solution" instead.
 - A "check" for every NAT question and for every MCQ whose correct option is a number (see the schema).
 - Together the practice questions cover every archetype listed above; no two practice questions are the same problem with new numbers.
-- An internal "mirrors" field naming the archetype it is calibrated to. Add a "figure" only where GATE would show a diagram (a beam, a circuit, a traverse, a graph to read): never one that only repeats the numbers already in the question.
+- An internal "mirrors" field naming the archetype it is calibrated to. Add a "figure" only where GATE would show a diagram (a beam, a circuit, a traverse, a graph to read, a piece of apparatus): never one that only repeats the numbers already in the question. Use the kind that draws it exactly; a picture of apparatus that no kind can draw is an "illustration", from this library:
+{{ILLUSTRATIONS}}

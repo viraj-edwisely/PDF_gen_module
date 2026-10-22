@@ -94,12 +94,16 @@ def topic_card(run, t):
                 st.dataframe(pd.DataFrame(quality.rows(t['quality']), columns=['Measure', 'Value']).astype(str), hide_index=True, width='stretch')
         feedback_box(t)
         with st.expander('Change this PDF'):
-            feedback = st.text_area('Regenerate with your feedback (runs the model again and costs money)', key=f"fb{t['id']}", placeholder='e.g. more worked examples, simpler language')
-            if st.button('Regenerate', key=f"rg{t['id']}", disabled=not feedback):
-                options = dict(run['options'], feedback=feedback)
-                if run['mode'] == 'gate': options['topics'] = [t['name']]
-                new = jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), options, user())
-                st.success(f'Started run #{new}. Refresh the list to open it.')
+            feedback = st.text_area('What should change?', key=f"fb{t['id']}", placeholder='e.g. make the example in the Otto cycle section use a compression ratio of 9; add a trap about knocking')
+            options = {k: v for k, v in run['options'].items() if k not in ('edit', 'feedback')}
+            if run['mode'] == 'gate': options['topics'] = [t['name']]
+            new_run = lambda opts: jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), opts, user())
+            if st.button('Change only this', key=f"ed{t['id']}", disabled=not feedback, type='primary',
+                         help='One model call over this PDF: only the parts your request touches are rewritten, everything else stays as it is. The result is a new run; this PDF is kept.'):
+                st.success(f"Started run #{new_run({**options, 'edit': {'from': t['id'], 'request': feedback}})}. Refresh the list to open it.")
+            if st.button('Write the whole PDF again with this as an extra instruction', key=f"rg{t['id']}", disabled=not feedback,
+                         help='Runs the whole process again (planning, notes, questions, checks): the whole PDF can change, and it costs as much as a new PDF.'):
+                st.success(f"Started run #{new_run({**options, 'feedback': feedback})}. Refresh the list to open it.")
             if run['mode'] == 'gate' and st.button('Re-render with the current renderer (no model, no cost)', key=f"cur{t['id']}",
                                                    help='Draws this PDF again from its saved content with the current layout, maths and figure code, and brings older '
                                                         'content to the current structure (solutions as steps, symbol lists).'):

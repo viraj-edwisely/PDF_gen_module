@@ -6,10 +6,11 @@ illustration library (pictures of machines and apparatus, generated once per con
 - drop_bad_figures(): figures whose labels still collide, or that are the wrong kind of figure, are left out.
 - pages():   the finished pages; what looks wrong becomes a note on the Runs page.
 - illustrations(): "illustration" figures take their picture from the library; a concept not in it is (when the run allows it)
-  drawn once (one image call, no check, no redraw), numbered by the image model itself. A picture waiting for approval is used
-  with an "Unreviewed" tag; a rejected one is left out.
+  drawn once (one low-quality image call, no check, no redraw), numbered by the image model itself. A picture waiting for approval
+  is used like an approved one (a note asks for its approval); a rejected one is left out.
 """
-import json, os, re, subprocess, sys, tempfile
+import io, json, os, re, subprocess, sys, tempfile
+from PIL import Image
 import content as C, db, llm
 from config import ILLUSTRATIONS_PER_RUN
 
@@ -141,8 +142,11 @@ def prompt(spec):
 
 
 def new_picture(job, spec, k):
-    """Draw a concept once and store it as pending: PDFs show it with an "Unreviewed" tag until a person approves it."""
+    """Draw a concept once and store it as pending (PDFs use it at once; a person approves or rejects it on the Illustrations page).
+    Stored at most 1024 pixels wide: a figure on a page needs no more."""
     png, price = llm.generate_image(prompt(spec))
+    im = Image.open(io.BytesIO(png)); im.thumbnail((1024, 1024))
+    out = io.BytesIO(); im.convert('RGB').save(out, 'PNG', optimize=True); png = out.getvalue()
     path = f'{k}.png'
     db.upload('illustrations', path, png, 'image/png')
     db.sql("insert into illustrations (concept, title, description, parts, path, status, review, created_by) values (%s,%s,%s,%s::jsonb,%s,'pending','',%s) "
@@ -153,7 +157,7 @@ def new_picture(job, spec, k):
 
 def illustrations(job, content, allow_new):
     """Fill "illustration" figures from the library (a temp file per picture). An approved picture is used as it is; one still waiting for
-    approval is used too, with an "Unreviewed" tag; a rejected one is left out. A concept not in the library is drawn now when the run
+    approval is used too; a rejected one is left out. A concept not in the library is drawn now when the run
     allows it. Returns (content, temp folder to delete after rendering)."""
     found = [(p, f) for p, f in walk_figures(content) if f.get('kind') == 'illustration']
     if not found: return content, None
@@ -172,8 +176,7 @@ def illustrations(job, content, allow_new):
             spec['file'] = os.path.join(folder, k + '.png')
             open(spec['file'], 'wb').write(db.download('illustrations', r['path']))
             spec['parts'] = r['parts'] or []
-            spec['unreviewed'] = r['status'] == 'pending'
-            if spec['unreviewed']: job.warn(f'Illustration "{k}" is not approved yet: this PDF shows it with an "Unreviewed" tag. Approve it on the Illustrations page and regenerate to remove the tag.')
+            if r['status'] == 'pending': job.warn(f'Illustration "{k}" is waiting for approval on the Illustrations page.')
             continue
         drop.append(path)
         if k: job.warn(f'The illustration "{k}" ' + (f'was rejected ({r["review"] or "see the Illustrations page"})' if r else 'is not in the library and new pictures are off') + ', so this PDF leaves it out.')

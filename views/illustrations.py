@@ -1,10 +1,10 @@
-"""Illustrations page: the library of pictures of real apparatus. A new picture is used in PDFs at once with an "Unreviewed" tag until a
-person approves it here; a rejected picture is never used. Anyone signed in may approve, reject or delete; who did it is recorded."""
+"""Illustrations page: the library of pictures of real apparatus. A new picture is used in PDFs at once; a person approves
+or rejects it here, and a rejected picture is never used again. Anyone signed in may approve, reject or delete; who did it is recorded."""
 import streamlit as st
 import db
 from ui import user
 
-STATUS = {'pending': "⏳ In use with an 'Unreviewed' tag", 'approved': '✅ Approved', 'rejected': '❌ Rejected'}
+STATUS = {'pending': '⏳ In use, waiting for approval', 'approved': '✅ Approved', 'rejected': '❌ Rejected'}
 
 
 @st.cache_data(ttl=600, max_entries=200, show_spinner=False)
@@ -26,8 +26,8 @@ def remove(r):
 
 st.title('Illustrations')
 st.caption('Pictures for what students must recognise (an engine, a pump, tray types, a heat-exchanger cut-away). Each concept is drawn once (no automatic check), '
-           'numbered by the image model and used in PDFs at once with an Unreviewed tag. Check that each number sits on the right part and that the apparatus is drawn correctly, '
-           'then approve it (the tag goes when a PDF is regenerated) or reject it (PDFs stop using it).')
+           'numbered by the image model and used in PDFs at once. Check that each number sits on the right part and that the apparatus is drawn correctly, '
+           'then approve it or reject it (PDFs stop using it).')
 rows = db.sql('select * from illustrations order by (status = \'pending\') desc, created_at desc')
 if not rows: st.info('No illustrations yet. Turn on "Draw new illustrations" on the Generate page for a topic that needs one.'); st.stop()
 show = st.segmented_control('Show', ['Waiting', 'Approved', 'Rejected', 'All'], default='Waiting')

@@ -478,16 +478,55 @@ def nongate(job):
     render_and_store(job, 'nongate', content)
 
 
+def edit(job):
+    """Change an existing PDF as the user asked: the saved content goes to the model once, which returns replacements for just the items the
+    request touches; those are put in, and the PDF is drawn again. No planning, no rewriting, no visual review."""
+    o, mode = job.run['options'], job.run['mode']
+    src = db.sql('select json_path from run_topics where id=%s', (o['edit']['from'],))
+    if not src or not src[0]['json_path']: raise RuntimeError('the PDF to change is no longer stored')
+    content = json.loads(db.download('outputs', src[0]['json_path']))
+    if mode == 'gate': content = C.retidy(content)
+    job.progress('Applying the change')
+    reply = job.saved('edit')
+    if reply is None:
+        reply, usage, _ = llm.generate_json(job.system, fill(read('edit.md'), REQUEST=o['edit']['request'], CONTENT=json.dumps(content, ensure_ascii=False)), REPAIR_TOKENS, job.effort)
+        job.save('edit', reply, usage)
+    changed = []
+    for f in (reply.get('fixes') if isinstance(reply, dict) else None) or []:
+        p = C.unref(f.get('ref', '')) if isinstance(f, dict) else None
+        try: old = C.get(content, p) if p else None
+        except (KeyError, IndexError, TypeError): old = None
+        if old is None or 'value' not in f or not same_kind(old, f['value']): job.warn(f'A change to "{f.get("ref")}" was not applied: it is not an item of this PDF, or has the wrong shape.'); continue
+        C.put(content, p, f['value']); changed.append(C.label(p, content))
+    summary = str(reply.get('summary') or '')[:300] if isinstance(reply, dict) else ''
+    if not changed: raise RuntimeError('nothing was changed' + (f': {summary}' if summary else ' (the model returned no usable change)'))
+    job.warn('Changed: ' + ', '.join(dict.fromkeys(changed)) + (f'. {summary}' if summary else ''))
+    if mode == 'gate':
+        content = C.retidy(content)
+        errors = [e for e in C.gate_check(content)[0] if not e.startswith('PYQ')]       # official questions are never rewritten
+        if errors: job.warn('The GATE checker reports: ' + '; '.join(errors[:4]))
+    content = review.drop_bad_figures(job, content)
+    content, folder = review.illustrations(job, content, False)
+    job.progress('Rendering the PDF')
+    try: render_and_store(job, mode, content)
+    finally:
+        if folder: shutil.rmtree(folder, ignore_errors=True)
+
+
 def process(rt, run):
     """Run one topic through its pipeline. Raises CapReached or Cancelled; the worker handles those."""
     job = Job(rt, run)
-    (gate if run['mode'] == 'gate' else nongate)(job)
+    if (run['options'] or {}).get('edit'): edit(job)
+    else: (gate if run['mode'] == 'gate' else nongate)(job)
     db.event(run['created_by'], 'pdf ready', run['id'], topic=rt['name'])
 
 
 def rerender(rt, run, content):
     """Render an edited content JSON again (no model call): used when a user uploads a corrected JSON."""
     job = Job(rt, run)
+    content, folder = review.illustrations(job, content, False)          # a saved illustration points at a file that no longer exists
     bad = [p for p, m, hard in C.drawing_problems(content) if hard]
     if bad: C.drop(content, bad); job.warn(f'{len(bad)} figure(s) in the uploaded JSON could not be drawn and were left out.')
-    render_and_store(job, 'gate' if run['mode'] == 'gate' else 'nongate', content)
+    try: render_and_store(job, 'gate' if run['mode'] == 'gate' else 'nongate', content)
+    finally:
+        if folder: shutil.rmtree(folder, ignore_errors=True)
