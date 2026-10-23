@@ -8,8 +8,9 @@ import os
 MODEL = {'name': 'gpt-6-luna', 'price': (0.10, 0.50), 'cached': 0.1, 'max_out': 128_000, 'concurrent': 6}
 EFFORTS, DEFAULT_EFFORT = ('low', 'medium', 'high'), 'medium'
 # Illustrations (machines, apparatus, cut-aways): generated once per concept, approved by a person before any PDF uses them.
-# price: USD per image at this size and quality - confirm on the OpenAI pricing page before switching illustrations on.
-IMAGE_MODEL = {'name': 'gpt-image-2.5-flare', 'size': '1536x1024', 'quality': 'low', 'price': 0.02}      # low quality is enough for a figure; price is an estimate: confirm it
+# per_million: (USD per 1M text input tokens, USD per 1M image output tokens); the real cost of a picture comes from the tokens
+# the API reports. price: flat USD per image, used only for the estimate before a run (and if the API reports no usage).
+IMAGE_MODEL = {'name': 'gpt-image-2.5-flare', 'size': '1536x1024', 'quality': 'low', 'per_million': (5.0, 30.0), 'price': 0.02}      # low quality is enough for a figure
 ILLUSTRATIONS_PER_RUN = 6     # new illustrations one run may generate (each waits for approval before it appears in a PDF)
 RETRIES = 6               # retries of a rate-limited (429), overloaded or failed (5xx, timeout) call, with growing waits
 EMBED_MODEL, EMBED_DIMS, EMBED_PRICE = 'text-embedding-3-small', 1536, 0.02  # price per 1M tokens

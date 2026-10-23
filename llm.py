@@ -122,13 +122,15 @@ def generate_json(system, user, max_tokens=None, effort=DEFAULT_EFFORT, images=(
 
 
 def generate_image(prompt):
-    """One illustration from the image model (config.IMAGE_MODEL). Returns (PNG bytes, cost in USD)."""
+    """One illustration from the image model (config.IMAGE_MODEL). Returns (PNG bytes, cost in USD from the reported tokens)."""
     from openai import OpenAI
     try:
         r = OpenAI(api_key=secret('OPENAI_API_KEY'), max_retries=RETRIES).images.generate(
             model=IMAGE_MODEL['name'], prompt=prompt, size=IMAGE_MODEL['size'], quality=IMAGE_MODEL['quality'], n=1)
     except _transient() as e: raise LLMError(f'The image model failed: {type(e).__name__}: {e}') from e
-    return base64.b64decode(r.data[0].b64_json), IMAGE_MODEL['price']
+    if not r.usage: return base64.b64decode(r.data[0].b64_json), IMAGE_MODEL['price']
+    p_in, p_out = IMAGE_MODEL['per_million']
+    return base64.b64decode(r.data[0].b64_json), (r.usage.input_tokens * p_in + r.usage.output_tokens * p_out) / 1e6
 
 
 def embed(texts):
