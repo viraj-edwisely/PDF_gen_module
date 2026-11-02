@@ -20,7 +20,9 @@ _para.paraFontSizeHeightOffset = 0       # a first line starts below its tallest
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.figure, matplotlib.font_manager, matplotlib.mathtext
+import numpy as np
+import matplotlib.figure, matplotlib.font_manager, matplotlib.mathtext, matplotlib.textpath
+import reportlab.pdfgen.canvas
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import figures as FIG
 import tex as TEX
@@ -65,7 +67,43 @@ normalize_tex = TEX.normalize      # LaTeX that mathtext cannot draw, rewritten 
 
 MATHTEXT = matplotlib.mathtext.MathTextParser('path')
 MATH_PAD = 2.0          # points above and below a formula's box, so accents and stacked tops are never cut
-MATH_SIDE = 0.8         # points left and right: enough for an italic overhang, without a gap around inline maths
+MATH_SIDE = 0.8        # points left and right: enough for an italic overhang, without a gap around inline maths
+
+
+VECTORS = {}            # placeholder file -> the outline of the formula it stands for (see draw_image)
+TEXTPATH = matplotlib.textpath.TextToPath()
+
+
+def draw_vector(canv, v, x, y, w, h):
+    """A formula's outline filled as vector paths: it stays sharp at any zoom, like the text around it."""
+    verts, codes, color, ox, oy, W0, H0 = v
+    p, k = canv.beginPath(), w / W0
+    pt = lambda i: ((verts[i][0] + ox) * k + x, (verts[i][1] + oy) * h / H0 + y)
+    i, cur = 0, (0, 0)
+    while i < len(codes):
+        c = codes[i]
+        n = {1: 1, 2: 1, 3: 2, 4: 3}.get(c, 1)
+        pts = [pt(i + j) for j in range(n)] if c in (1, 2, 3, 4) else []
+        if c == 1: p.moveTo(*pts[0])
+        elif c == 2: p.lineTo(*pts[0])
+        elif c == 3:                                                    # quadratic curve, as the cubic that draws the same
+            (x0, y0), (x1, y1), (x2, y2) = cur, pts[0], pts[1]
+            p.curveTo(x0 + 2 / 3 * (x1 - x0), y0 + 2 / 3 * (y1 - y0), x2 + 2 / 3 * (x1 - x2), y2 + 2 / 3 * (y1 - y2), x2, y2)
+        elif c == 4: p.curveTo(*pts[0], *pts[1], *pts[2])
+        else: p.close()
+        cur, i = (pts[-1] if pts else cur), i + n
+    canv.saveState(); canv.setFillColor(colors.HexColor(color)); canv.drawPath(p, stroke=0, fill=1, fillMode=1); canv.restoreState()
+
+
+_draw_image = reportlab.pdfgen.canvas.Canvas.drawImage
+
+
+def draw_image(self, image, x, y, width=None, height=None, *a, **kw):
+    v = VECTORS.get(getattr(image, 'fileName', image))
+    return draw_vector(self, v, x, y, width, height) if v else _draw_image(self, image, x, y, width, height, *a, **kw)
+
+
+reportlab.pdfgen.canvas.Canvas.drawImage = draw_image
 
 
 def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
@@ -76,11 +114,11 @@ def math_img(tex, size=10.5, display=False, color='#1F1A2E'):
     fs = size * (1.25 if display else 1)
     w, h, d = MATHTEXT.parse(f'${tex}$', dpi=72, prop=matplotlib.font_manager.FontProperties(size=fs))[:3]    # raises on maths it cannot draw
     W, H = w + 2 * MATH_SIDE, h + 2 * MATH_PAD
-    fn = os.path.join(MATHDIR, hashlib.md5(f'{tex}|{fs}|{color}|box'.encode()).hexdigest() + '.png')
-    if not os.path.exists(fn):
-        fig = matplotlib.figure.Figure(figsize=(W / 72, H / 72))
-        fig.text(MATH_SIDE / W, (MATH_PAD + d) / H, f'${tex}$', fontsize=fs, color=color)
-        fig.savefig(fn, dpi=300, transparent=True)
+    fn = os.path.join(MATHDIR, hashlib.md5(f'{tex}|{fs}|{color}|vector'.encode()).hexdigest() + '.png')
+    if fn not in VECTORS:
+        verts, codes = TEXTPATH.get_text_path(matplotlib.font_manager.FontProperties(size=fs), f'${tex}$', ismath=True)
+        VECTORS[fn] = (np.asarray(verts) * (fs / TEXTPATH.FONT_SCALE), codes, color, MATH_SIDE, MATH_PAD + d, W, H)
+    if not os.path.exists(fn): __import__('PIL.Image', fromlist=['x']).new('RGBA', (1, 1)).save(fn)        # the page only needs a file to name; the formula itself is drawn as a path
     return fn, W, H, d + MATH_PAD
 
 
