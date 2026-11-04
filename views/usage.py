@@ -1,5 +1,6 @@
 """Usage page: who used the app, what they made and what it cost. Read from the events table, which keeps its rows
 when runs or books are deleted. Admins see the whole team; others see their own usage."""
+import functools
 import pandas as pd
 import streamlit as st
 import db
@@ -8,13 +9,20 @@ from ui import is_admin, user
 
 COLUMNS = {'sign in': 'Sign-ins', 'run started': 'Runs', 'pdf ready': 'PDFs made', 'pdf failed': 'PDFs failed', 'downloaded': 'Downloads', 'model call': 'Model calls'}
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_events(days, everyone, email):
+    """The period's events, kept for a minute: the page re-runs on every widget change, and every model call is an event."""
+    return pd.DataFrame(db.sql('select at as time, email, action, run_id, cost_usd::float as cost, detail from events where at > now() - make_interval(days => %s) '
+                               'and (%s or email = %s) order by at desc', (days, everyone, email)),
+                        columns=['time', 'email', 'action', 'run_id', 'cost', 'detail'])
+
+
 st.title('Usage')
 everyone = is_admin()
 c1, c2 = st.columns([1, 3])
 days = c1.selectbox('Period', [1, 7, 30, 90, 365], index=2, format_func=lambda d: 'Last 24 hours' if d == 1 else f'Last {d} days')
-ev = pd.DataFrame(db.sql('select at as time, email, action, run_id, cost_usd::float as cost, detail from events where at > now() - make_interval(days => %s) '
-                         'and (%s or email = %s) order by at desc', (days, everyone, user())),
-                  columns=['time', 'email', 'action', 'run_id', 'cost', 'detail'])
+ev = load_events(days, everyone, user())
 if everyone:
     people = c2.multiselect('People', sorted(ev.email.dropna().unique()), placeholder='Everyone')
     if people: ev = ev[ev.email.isin(people)]
@@ -47,5 +55,5 @@ act = ev[ev.action != 'model call'].head(300)
 st.dataframe(pd.DataFrame({'When': act.time.dt.strftime('%d %b, %H:%M'), 'Who': act.email, 'What': act.action,
                            'Run': act.run_id.map(lambda r: f'#{int(r)}' if pd.notna(r) else ''),
                            'Details': act.detail.map(lambda d: ' · '.join(f'{k}: {v}' for k, v in (d or {}).items()))}), hide_index=True)
-st.download_button('Download all events of this period (CSV)', ev.to_csv(index=False), f'usage_last_{days}_days.csv', mime='text/csv',
+st.download_button('Download all events of this period (CSV)', functools.partial(ev.to_csv, index=False), f'usage_last_{days}_days.csv', mime='text/csv',
                    help='Every event, including each model call with its tokens and cost.')

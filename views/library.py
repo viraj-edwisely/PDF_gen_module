@@ -40,6 +40,8 @@ if submitted:
 def book_list():
     books = db.sql('select * from books order by created_at desc')
     if not books: st.info('No books yet.'); return
+    units_of = {}                                           # every book's units in one query, not one query per book
+    for u in db.sql('select book_id, name, start_page, end_page from units order by start_page'): units_of.setdefault(u['book_id'], []).append(u)
     for b in books:
         icon = {'ready': '✅', 'failed': '❌'}.get(b['status'], '⏳')
         with st.expander(f"{icon} {b['title']} · {b['subject']} · {KINDS[b['kind']]}" + (f" · {b['page_count']} pages" if b['page_count'] else ''), expanded=b['status'] not in ('ready', 'failed')):
@@ -55,7 +57,7 @@ def book_list():
             else:
                 offset = st.number_input('Extra pages before page 1 (advanced)', value=int(b['page_offset']), step=1, key=f"off{b['id']}",
                                          help='Detected automatically. Change it only if a page range picks the wrong pages: enter how many PDF pages (cover, contents) come before the book\'s printed page 1.')
-                units = pd.DataFrame(db.sql('select name, start_page, end_page from units where book_id=%s order by start_page', (b['id'],)), columns=['name', 'start_page', 'end_page'])
+                units = pd.DataFrame(units_of.get(b['id'], []), columns=['name', 'start_page', 'end_page'])
                 st.caption('Units, in printed page numbers. They appear as choices on the Generate page. Edit, add or remove rows; with none, use page ranges.')
                 edited = st.data_editor(units, num_rows='dynamic', key=f"units{b['id']}", width='stretch',
                                         column_config={'name': 'Unit name', 'start_page': st.column_config.NumberColumn('First page', min_value=1, step=1),

@@ -31,6 +31,15 @@ create table if not exists run_topics (
   status text not null default 'queued', step text, warnings jsonb default '[]', cost_usd numeric default 0,
   pdf_path text, json_path text, error text);
 
+create index if not exists run_topics_run on run_topics (run_id, position);                      -- a run's topics (Runs page, every refresh)
+create index if not exists run_topics_active on run_topics (run_id) where status in ('queued', 'running');   -- the workers' claim query, every few seconds
+create index if not exists units_book on units (book_id, start_page);
+
+create table if not exists run_pyq (               -- uploaded PYQ file texts of a run (up to 120k characters each), kept out of runs.options so the run list stays light
+  run_id bigint primary key references runs on delete cascade, sources jsonb not null);
+insert into run_pyq (run_id, sources) select id, options->'pyq' from runs where options->'pyq' is not null on conflict do nothing;   -- carry over runs made before this table
+update runs set options = options - 'pyq' where options->'pyq' is not null;
+
 create table if not exists steps (                 -- saved output of each pipeline step: powers resume and cost totals
   run_topic_id bigint references run_topics on delete cascade, name text, output jsonb,
   input_tokens int default 0, output_tokens int default 0, cost_usd numeric default 0, primary key (run_topic_id, name));
@@ -84,3 +93,4 @@ alter table runs enable row level security;    alter table run_topics enable row
 alter table steps enable row level security;   alter table logs enable row level security;
 alter table events enable row level security;  alter table users enable row level security;
 alter table feedback enable row level security; alter table illustrations enable row level security;
+alter table run_pyq enable row level security;

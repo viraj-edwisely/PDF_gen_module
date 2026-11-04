@@ -1,6 +1,7 @@
 """Database (direct Postgres connection to Supabase) and file storage (Supabase Storage)."""
 import functools, json, os, re
 from urllib.parse import quote, unquote
+from psycopg import OperationalError
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from config import secret
@@ -22,22 +23,35 @@ def _dsn():
 @functools.cache
 def _pool():
     # prepare_threshold=None: Supabase's pooler (transaction mode) does not support prepared statements
-    # check: a connection the pooler closed while idle is replaced before use, instead of failing one query
-    return ConnectionPool(_dsn(), min_size=1, max_size=12, open=True, check=ConnectionPool.check_connection, max_idle=120,
+    # no per-checkout check: it cost one extra round trip to the database for every statement (see _run for the replacement)
+    return ConnectionPool(_dsn(), min_size=1, max_size=12, open=True, max_idle=120,
                           kwargs={'autocommit': True, 'row_factory': dict_row, 'prepare_threshold': None})
+
+
+def _run(work):
+    """work(conn) on a pooled connection. One the pooler closed while idle fails on first use and is discarded by the pool, so the
+    statement is tried again on another connection. After a pooler or database restart every pooled connection is dead, and each
+    failure discards one: hence one more try than the pool has connections. Any other error is raised as it is."""
+    tries = _pool().max_size + 1
+    for attempt in range(tries):
+        conn = None
+        try:
+            with _pool().connection() as conn: return work(conn)
+        except OperationalError:
+            if attempt == tries - 1 or conn is None or not conn.broken: raise
 
 
 def sql(query, args=()):
     """Run one statement; returns the rows (a list of dicts) for SELECT and RETURNING, else []."""
-    with _pool().connection() as conn:
+    def work(conn):
         cur = conn.execute(query, args)
         return cur.fetchall() if cur.description else []
+    return _run(work)
 
 
 def many(query, rows):
     """Run one statement for many rows (bulk insert)."""
-    with _pool().connection() as conn:
-        conn.cursor().executemany(query, rows)
+    _run(lambda conn: conn.cursor().executemany(query, rows))
 
 
 def event(email, action, run_id=None, cost=0, **detail):

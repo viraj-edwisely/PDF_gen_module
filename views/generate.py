@@ -9,6 +9,12 @@ from ui import user
 
 EFFORT_OUTPUT = {'low': 0.6, 'medium': 1.0, 'high': 1.8}      # rough share of the medium-level output (reasoning tokens are billed as output)
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def scope_size(book_id, first, last):
+    """Tokens (about 4 characters each) in a page range of a book. It reads the stored page text, so it is asked once per range, not on every edit of the form."""
+    return db.sql('select coalesce(sum(length(text)), 0) / 4 n from pages where book_id=%s and pdf_page between %s and %s', (book_id, first, last))[0]['n']
+
 st.title('Generate PDFs')
 
 # 1. what to make
@@ -153,7 +159,7 @@ options['prompt'] = st.text_area('User prompt (optional)', height=100, placehold
 
 # 5. review
 st.subheader('5 · Review and start')
-scope_tokens = db.sql('select coalesce(sum(length(text)), 0) / 4 n from pages where book_id=%s and pdf_page between %s and %s', (book['id'], start + book['page_offset'], end + book['page_offset']))[0]['n'] if book else 0
+scope_tokens = scope_size(book['id'], start + book['page_offset'], end + book['page_offset']) if book else 0
 n = max(1, len(topics))
 context = scope_tokens if scope_tokens <= SCOPE_TOKEN_BUDGET else TOPIC_TOKEN_BUDGET
 calls, out_tokens = (4, 40_000) if mode == 'gate' else (2 + -(-n // 3), 9_000 * n + 12_000)    # GATE: plan, 2 notes, questions; Non-GATE: plan, topics in threes, end matter
@@ -189,10 +195,10 @@ with st.container(border=True):
     if st.button('Generate', type='primary', disabled=bool(errors)):
         if last and last[0] == same and time.time() - last[1] < 120:
             st.info(f'Run #{last[2]} with these settings was started a moment ago. Change something, or wait two minutes, to start another.'); st.stop()
-        try: options['pyq'] = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
-                               for t, (kind, got) in sources.items()}
+        try: sources_read = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
+                             for t, (kind, got) in sources.items()}
         except Exception as e: st.error(f'A PYQ file could not be read: {e}. Save it again as a digital PDF or .docx and retry.'); st.stop()
-        run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), options, user())
+        run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), options, user(), pyq=sources_read)
         st.session_state.last_run = (same, time.time(), run_id)
         st.success(f'Run #{run_id} started.')
         st.page_link('views/runs.py', label='Open the Runs page to follow it', icon='📄')

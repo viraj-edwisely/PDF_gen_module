@@ -1,5 +1,5 @@
 """Runs page: find a run (search and filters), follow its PDFs, review notes, download, resume, cancel, regenerate, delete."""
-import io, json, re, zipfile
+import functools, io, json, re, zipfile
 import openpyxl
 import pandas as pd
 import pymupdf
@@ -13,14 +13,23 @@ TOPIC_CHIP = {'queued': '⏳ Waiting', 'running': '⚙️ Working', 'done': '✅
 RUN_STATUS = {'queued': 'Waiting', 'running': 'Working', 'done': 'Done', 'partial': 'Partly failed', 'failed': 'Failed',
               'stopped': 'Stopped (cost cap)', 'cancelled': 'Cancelled', 'interrupted': 'Interrupted'}
 HEADER = ['Topic', 'Unit No', 'Topic No', 'File', 'Mode', 'Writer', 'Status', 'Cost (USD)', 'PYQs', 'Practice', 'Sample paper Q', 'Worked examples', 'Figures', 'Notes']
-LIST_SQL = """select r.*, extract(epoch from now() - r.heartbeat_at) as age, count(t.id) as n,
+LIST_SQL = """select r.id, r.mode, r.title, r.status, r.model, r.cost_usd, r.created_by, r.created_at,
+                     jsonb_build_object('subject', coalesce(r.options->'subject', '""'::jsonb), 'topics', coalesce(r.options->'topics', '[]'::jsonb)) as options,
+                     extract(epoch from now() - r.heartbeat_at) as age, count(t.id) as n,
                      count(t.id) filter (where t.status in ('done', 'warnings')) as ready, count(t.id) filter (where t.status = 'failed') as bad
-              from runs r left join run_topics t on t.run_id = r.id group by r.id order by r.id desc limit 300"""
+              from runs r left join run_topics t on t.run_id = r.id group by r.id order by r.id desc limit 300"""      # only what the list shows: not every run's whole options
 
 
 @st.cache_data(ttl=600, max_entries=60, show_spinner=False)
 def fetch(path):
+    """A stored file, for the preview, the zip and re-rendering (downloads fetch their file only when clicked)."""
     return db.download('outputs', path)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def all_feedback():
+    return db.sql("""select f.created_at, f.email, f.category, f.page, f.comment, t.name as topic, t.run_id from feedback f join run_topics t on t.id = f.run_topic_id
+                     order by f.id desc limit 2000""")
 
 
 def status(run):
@@ -67,7 +76,7 @@ def build_zip(run, topics):
     return buf.getvalue()
 
 
-def topic_card(run, t):
+def topic_card(run, t, notes):
     with st.container(border=True):
         st.markdown(f"**{t['name']}** · {TOPIC_CHIP[t['status']]}" + (f" · *{t['step']}*" if t['status'] == 'running' and t['step'] else '') + f" · ${float(t['cost_usd']):.2f}")
         if t['error']:
@@ -83,21 +92,22 @@ def topic_card(run, t):
         if not t['pdf_path']: return
         c1, c2, c3 = st.columns([1, 1, 2])
         stem = C.pdf_filename(run['options'], t['name'])[:-4]
-        c1.download_button('⬇ Download PDF', fetch(t['pdf_path']), file_name=stem + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary',
+        # the file is fetched from storage when the button is clicked, not on every refresh of the page
+        c1.download_button('⬇ Download PDF', functools.partial(db.download, 'outputs', t['pdf_path']), file_name=stem + '.pdf', mime='application/pdf', key=f"pdf{t['id']}", type='primary',
                            on_click=db.event, args=(user(), 'downloaded', run['id']), kwargs={'file': stem + '.pdf'})
-        c2.download_button('Download JSON', fetch(t['json_path']), file_name=stem + '.json', key=f"json{t['id']}")
+        c2.download_button('Download JSON', functools.partial(db.download, 'outputs', t['json_path']), file_name=stem + '.json', key=f"json{t['id']}")
         if c3.toggle('Preview first pages', key=f"pv{t['id']}"):
             doc = pymupdf.open(stream=fetch(t['pdf_path']), filetype='pdf')
             st.image([p.get_pixmap(dpi=60).tobytes('png') for p in list(doc)[:3]], width=260)
         if t.get('quality'):
             with st.expander('Quality report'):
                 st.dataframe(pd.DataFrame(quality.rows(t['quality']), columns=['Measure', 'Value']).astype(str), hide_index=True, width='stretch')
-        feedback_box(t)
+        feedback_box(t, notes)
         with st.expander('Change this PDF'):
             feedback = st.text_area('What should change?', key=f"fb{t['id']}", placeholder='e.g. make the example in the Otto cycle section use a compression ratio of 9; add a trap about knocking')
             options = {k: v for k, v in run['options'].items() if k not in ('edit', 'feedback')}
             if run['mode'] == 'gate': options['topics'] = [t['name']]
-            new_run = lambda opts: jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), opts, user())
+            new_run = lambda opts: jobs.create_run(run['mode'], run['book_id'], (run['scope_start'], run['scope_end']), opts, user(), pyq_from=run['id'])
             if st.button('Change only this', key=f"ed{t['id']}", disabled=not feedback, type='primary',
                          help='One model call over this PDF: only the parts your request touches are rewritten, everything else stays as it is. The result is a new run; this PDF is kept.'):
                 st.success(f"Started run #{new_run({**options, 'edit': {'from': t['id'], 'request': feedback}})}. Refresh the list to open it.")
@@ -115,10 +125,9 @@ def topic_card(run, t):
                 except Exception as e: st.error(f'Could not render: {e}')
 
 
-def feedback_box(t):
+def feedback_box(t, notes):
     """Reviewers mark what is wrong (category, page, comment); every entry is kept, becomes a test case and, where it can,
-    a new automatic check."""
-    notes = db.sql('select * from feedback where run_topic_id=%s order by id', (t['id'],))
+    a new automatic check. notes: this PDF's entries so far."""
     with st.expander(f"Reviewer feedback ({len(notes)})" if notes else 'Reviewer feedback'):
         for n in notes: st.markdown(f"- **{n['category']}**" + (f" · page {n['page']}" if n['page'] else '') + f" · {n['comment']}  \n  <small>{n['email']}, {n['created_at']:%d %b %H:%M}</small>", unsafe_allow_html=True)
         with st.form(f"fbf{t['id']}", clear_on_submit=True, border=False):
@@ -128,7 +137,7 @@ def feedback_box(t):
             text = st.text_area('What is wrong, and what it should be', key=f"fbt{t['id']}", placeholder='e.g. the BMD should be parabolic under the UDL; units show as m₃')
             if st.form_submit_button('Add feedback') and text.strip():
                 db.sql('insert into feedback (run_topic_id, email, category, page, comment) values (%s,%s,%s,%s,%s)', (t['id'], user(), cat, page or None, text.strip()))
-                db.event(user(), 'feedback', t['run_id'], topic=t['name'], category=cat); st.rerun()
+                db.event(user(), 'feedback', t['run_id'], topic=t['name'], category=cat); all_feedback.clear(); st.rerun()
 
 
 def show(run_id, was_active):
@@ -136,6 +145,8 @@ def show(run_id, was_active):
     if not run: st.info('This run was deleted.'); return
     run = run[0]
     topics = db.sql('select * from run_topics where run_id=%s order by position', (run_id,))
+    notes = {}                                      # reviewer feedback of all the PDFs in one query, not one query per PDF
+    for n in db.sql('select * from feedback where run_topic_id = any(%s) order by id', ([t['id'] for t in topics],)): notes.setdefault(n['run_topic_id'], []).append(n)
     s = status(run)
     active = s in ('queued', 'running')
     if was_active and not active: st.rerun()          # the run just finished: leave auto-refresh mode
@@ -163,7 +174,7 @@ def show(run_id, was_active):
                 db.remove('outputs', [p for t in topics for p in (t['pdf_path'], t['json_path']) if p])
                 db.sql('delete from runs where id=%s', (run_id,)); db.event(user(), 'deleted run', run_id, title=title(run))
                 st.session_state.pop('runs_table', None); st.rerun()
-    for t in topics: topic_card(run, t)
+    for t in topics: topic_card(run, t, notes.get(t['id'], []))
     with st.expander('Log'):
         rows = db.sql('select l.at, t.name, l.text from logs l left join run_topics t on t.id = l.run_topic_id where l.run_id=%s order by l.id desc limit 400', (run_id,))
         st.code('\n'.join(f"{r['at']:%H:%M:%S}  " + (f"[{r['name'][:30]}] " if r['name'] else '') + r['text'] for r in rows) or 'Nothing logged yet.', language=None, wrap_lines=True)
@@ -173,8 +184,7 @@ def show(run_id, was_active):
 st.title('Runs')
 runs = db.sql(LIST_SQL)
 with st.expander('All reviewer feedback'):
-    fb = db.sql("""select f.created_at, f.email, f.category, f.page, f.comment, t.name as topic, t.run_id from feedback f join run_topics t on t.id = f.run_topic_id
-                   order by f.id desc limit 2000""")
+    fb = all_feedback()
     if fb:
         df = pd.DataFrame(fb)
         st.dataframe(df[['created_at', 'topic', 'category', 'page', 'comment', 'email']], hide_index=True, width='stretch', height=240)
@@ -188,7 +198,7 @@ query = f1.text_input('Search', placeholder='topic, subject or person').strip().
 wanted = f2.multiselect('Status', ['Working', 'Done', 'Partly failed', 'Failed', 'Stopped / cancelled'], placeholder='All statuses')
 kind = f3.selectbox('Type', ['All', 'GATE', 'Non-GATE'])
 mine = f4.toggle('Only mine')
-f5.button('↻', help='Refresh the list')
+if f5.button('↻', help='Refresh the list'): all_feedback.clear()
 GROUP = {'queued': 'Working', 'running': 'Working', 'interrupted': 'Working', 'done': 'Done', 'partial': 'Partly failed', 'failed': 'Failed',
          'stopped': 'Stopped / cancelled', 'cancelled': 'Stopped / cancelled'}
 shown = [r for r in runs

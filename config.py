@@ -25,6 +25,7 @@ TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time
 PARALLEL = 4              # model calls running at the same time inside one PDF
 SCOPE_TOKEN_BUDGET = 16_000   # scope text up to this size is sent whole, in page order (it goes into 4 calls, so larger scopes are searched)
 TOPIC_TOKEN_BUDGET = 8_000    # retrieval budget per call for larger scopes (GATE notes and questions search their own sections)
+POLL_SECONDS = 8          # an idle worker looks for new work this often (each look is a database query); a new run starts within this many seconds
 STALE_SECONDS = 60        # a running run with an older heartbeat shows as interrupted
 
 

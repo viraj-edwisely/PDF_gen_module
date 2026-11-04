@@ -254,7 +254,8 @@ def render_and_store(job, mode, content, look=None):
 def pyq_step(job, topic, o):
     """Previous-year questions from this topic's sources (links, or text read from uploaded PDF/Word files on the Generate page);
     only those found verbatim in a source are kept."""
-    src = (o.get('pyq') or {}).get(topic) or {}
+    rows = db.sql('select sources->%s::text as src from run_pyq where run_id=%s', (topic, job.run['id']))
+    src = (rows and rows[0]['src']) or {}
     texts = list(src.get('texts') or [])
     for url in src.get('urls') or []:
         try: texts.append(pyq.fetch_text(url))
