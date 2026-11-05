@@ -27,11 +27,11 @@ def extract_pages(doc):
 
 def detect_units(doc, pages, offset):
     """Units as (name, first printed page, last printed page): PDF bookmarks, else the printed contents pages, else none."""
-    found = [(t.strip(), p - offset) for lvl, t, p in doc.get_toc() if lvl == 1 and p > 0]
+    found = [(t.replace('\x00', '').strip(), p - offset) for lvl, t, p in doc.get_toc() if lvl == 1 and p > 0]
     if len(found) < 2:
         found = []
         for page in list(doc)[:30]:                  # the page's own lines: a contents page is often one text block
-            for line in page.get_text().split('\n'):
+            for line in page.get_text().replace('\x00', '').split('\n'):
                 m = UNIT_LINE.match(line)
                 if m: found.append((re.sub(r'[\s.\u2026]+$', '', m.group(1)), int(m.group(2))))
     last = len(pages) - offset
