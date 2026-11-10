@@ -158,10 +158,19 @@ def new_picture(job, spec, k):
 def illustrations(job, content, allow_new):
     """Fill "illustration" figures from the library (a temp file per picture). An approved picture is used as it is; one still waiting for
     approval is used too; a rejected one is left out. A concept not in the library is drawn now when the run
-    allows it. Returns (content, temp folder to delete after rendering)."""
+    allows it. The user's own images ("photo" figures) are loaded too. Returns (content, temp folder to delete after rendering)."""
     found = [(p, f) for p, f in walk_figures(content) if f.get('kind') == 'illustration']
-    if not found: return content, None
+    photos = [(p, f) for p, f in walk_figures(content) if f.get('kind') == 'photo']
+    if not found and not photos: return content, None
     folder, drop, made = tempfile.mkdtemp(), [], 0
+    for path, f in photos:
+        spec = f['spec'] = f['spec'] if isinstance(f.get('spec'), dict) else {}
+        if not spec.get('path'): drop.append(path); job.warn(f'{C.label(C.item_path(path), content)}: a "photo" figure that is not one of your images was left out.'); continue
+        try:
+            spec['file'] = os.path.join(folder, os.path.basename(spec['path']))
+            open(spec['file'], 'wb').write(db.download('outputs', spec['path']))
+        except Exception as e:
+            drop.append(path); job.warn(f'One of your images ({spec.get("id")}) could not be loaded, so this PDF leaves it out ({type(e).__name__}).')
     for path, f in found:
         spec, k = f.setdefault('spec', {}), key(f.get('spec') or {})
         row = db.sql('select * from illustrations where concept=%s', (k,)) if k else []

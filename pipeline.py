@@ -296,7 +296,7 @@ def verify(job, topic, o, notes, q):
                 steps = [{k: v for k, v in st.items() if k != 'blocks'} for st in b.get('steps') or [] if isinstance(st, dict)]
                 items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'worked_example': rest[:1], 'given': b.get('given'),
                               'solution': steps or rest[1:], 'answer': b.get('answer'), 'figures': [figure_brief(f) for f in figs]})
-            elif b.get('type') == 'figure':
+            elif b.get('type') == 'figure' and b.get('kind') != 'photo':          # the user's own images are not reviewed
                 items.append({'ref': C.ref(('notes', i, 'blocks', j)), 'section': n['heading'], 'figure': figure_brief(b)})
     valid = {x['ref'] for x in items}
     keep = lambda out, k: [i for i in C._list(out.get(k) if isinstance(out, dict) else None) if isinstance(i, dict) and isinstance(i.get('ref'), str) and i['ref'] in valid]
@@ -334,10 +334,27 @@ def verify(job, topic, o, notes, q):
     return fixed['notes'], {k: fixed[k] for k in ('practice', 'sample_paper', 'traps', 'revision_card')}
 
 
+def user_photos(job, o):
+    """The user's own images for this topic, as ({id: {"name", "hint", "path"}}, {id: image bytes}); one that cannot be read is left out."""
+    photos, data = {}, {}
+    for p in (o.get('images') or {}).get(job.rt['name']) or []:
+        try: data[p['id']] = db.download('outputs', p['path']); photos[p['id']] = p
+        except Exception as e: job.warn(f'Your image "{p.get("name")}" could not be read from storage, so it is left out ({str(e)[:100]}).')
+    return photos, data
+
+
+def photo_lines(photos, ids, sections=None):
+    """One line per image for a prompt: its id, (its section,) its file name and what the user says it shows."""
+    where = {i: s['heading'] for s in sections or [] for i in s.get('photos', [])}
+    return '\n'.join(f"- {i}" + (f' (section "{where[i]}")' if i in where else '') + f": file \"{photos[i].get('name', '')}\""
+                     + (f"; the user says it shows: {photos[i]['hint']}" if photos[i].get('hint') else '') for i in ids)
+
+
 def gate(job):
     run, rt = job.run, job.rt
     o = run['options']
     topic, subtopics = C.split_topic(rt['name'], ', '.join((o.get('subtopics') or {}).get(rt['name']) or []))     # older runs: subtopics in the name
+    photos, shots = user_photos(job, o)
     book = run_book(run)
     job.progress('Reading the book' if book else 'Starting')
     search = lambda sections=(): retrieve.topic_context(book, run['scope_start'], run['scope_end'], ' '.join([topic] + subtopics), sections)
@@ -367,8 +384,17 @@ def gate(job):
         return retrieve.topic_context(b, 1, max(1, b['page_count'] - b['page_offset']), ' '.join([topic] + subtopics))['text'][:40_000]
     ref_text = job.step('reference', reference) if o.get('reference_book') else ''
     job.progress('Planning the sections')
-    plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or '', REFERENCE=ref_text or '(none)'), tidy=C.gate_plan,
-                   problems=lambda p: C.gate_plan_problems(p, subtopics))
+    photo_note = fill(read('gate/plan_photos.md'), PHOTOS=photo_lines(photos, list(photos))) if photos else ''
+    plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or '', REFERENCE=ref_text or '(none)', PHOTOS=photo_note),
+                   tidy=C.gate_plan, problems=lambda p: C.gate_plan_problems(p, subtopics), images=list(shots.values()))
+    unused = C.plan_photos(plan, list(photos))
+    def report():           # once (a saved step), so a resumed run does not repeat the notes
+        why = {str(x.get('id')): str(x.get('reason') or '') for x in plan['photos_unused']}
+        for i in unused: job.warn(f'Your image "{photos[i].get("name")}" was left out: ' + (why.get(i) or 'the planner found no section it fits') + '.')
+        placed = {photos[i].get('name'): s['heading'] for s in plan['sections'] for i in s['photos']}
+        job.log('Your images: ' + '; '.join(f'"{n}" -> section "{h}"' for n, h in placed.items()))
+        return placed
+    if photos: job.step('photo_places', report)
     archetypes = '; '.join(map(str, plan.get('archetypes') or []))
     notation = json.dumps(plan.get('notation') or [], ensure_ascii=False) if plan.get('notation') else '(none given: define each symbol where it is first used)'
 
@@ -379,9 +405,12 @@ def gate(job):
 
     def write_notes(k, group):
         others = ', '.join(s['heading'] for s in sections if s not in group) or '(none)'
+        ids = [i for s in group for i in s.get('photos', [])]
         out = job.ask(f'notes_part{k}', fill(read('gate/notes.md'), **book_for(f'context_notes{k}', group), SECTIONS=json.dumps(group, ensure_ascii=False), DONE=others,
-                                            ARCHETYPES=archetypes, STORYLINE=plan.get('storyline') or '(not given)', NOTATION=notation),
-                      tidy=lambda x: C.align_notes(C.gate_notes(x), group), problems=lambda out: C.gate_notes_problems(out, group))
+                                            ARCHETYPES=archetypes, STORYLINE=plan.get('storyline') or '(not given)', NOTATION=notation,
+                                            PHOTOS=fill(read('gate/notes_photos.md'), PHOTOS=photo_lines(photos, ids, group)) if ids else ''),
+                      tidy=lambda x: C.place_photos(C.align_notes(C.gate_notes(x), group), group, photos), problems=lambda out: C.gate_notes_problems(out, group),
+                      images=[shots[i] for i in ids])
         return [n for n in out['notes'] if n['blocks']]        # a section still broken after its repair was emptied: left out
 
     job.progress('Writing notes and questions (at the same time)')

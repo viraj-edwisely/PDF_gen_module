@@ -19,6 +19,7 @@ COST_CAP = 5.0            # USD per run; the run stops cleanly when reached
 MAX_TOPICS = 20           # per run
 TIMEZONE = 'Asia/Kolkata'  # times on the Usage page
 MAX_URLS = 10            # PYQ source links or files per topic
+MAX_IMAGES, IMAGE_PX = 10, 1600     # the user's own images per GATE topic; each is shrunk to this many pixels on its longer side
 MAX_BOOK_MB, MAX_PAGES = 100, 1500
 WORKERS = 4               # PDFs (and book uploads) processed at the same time, across all runs
 TOPIC_PARALLEL = 3        # PDFs of one GATE run processed at the same time

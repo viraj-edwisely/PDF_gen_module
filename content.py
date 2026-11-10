@@ -23,7 +23,7 @@ from llm import loads                               # noqa: E402  (json.loads th
 GATE_BLOCKS = {'para', 'subhead', 'bullets', 'numbered', 'formula', 'table', 'example', 'trap', 'note', 'callout', 'code', 'figure', 'spacer', 'pagebreak'}
 NONGATE_BLOCKS = {'situation', 'concept', 'worked_example', 'pitfall', 'note', 'quick_check', 'para', 'table', 'bullets', 'numbered', 'formula', 'figure', 'subhead'}
 FIGURE_KINDS = {'gantt', 'timeline', 'plot', 'bars', 'graph', 'cells', 'circuit', 'geometry', 'block', 'logic', 'mermaid',
-                'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'mccabe', 'vle', 'process', 'illustration'}
+                'beam', 'mohr', 'pressure', 'waveform', 'spectrum', 'cycle', 'control', 'mccabe', 'vle', 'process', 'illustration', 'photo'}
 FIELD = {'para': 'text', 'subhead': 'text', 'bullets': 'items', 'numbered': 'items', 'formula': 'latex', 'code': 'text', 'callout': 'text',
          'trap': 'text', 'situation': 'text', 'concept': 'text', 'pitfall': 'text', 'worked_example': 'text', 'quick_check': 'items'}
 ALIASES = {'text': ('content', 'body', 'value', 'paragraph', 'description', 'statement', 'code'), 'items': ('list', 'points', 'bullets', 'steps', 'entries', 'questions'),
@@ -388,6 +388,8 @@ def gate_plan(p):
         s['heading'] = unnumber(_text(_first(s, 'heading', 'title', 'name') or ''))
         s['figure'] = _text(s.get('figure') or '')
         for k in ('builds_on', 'no_figure_reason'): s[k] = _text(s.get(k) or '')
+        s['photos'] = [_text(x).strip() for x in _list(s.get('photos')) if isinstance(x, str)]
+    p['photos_unused'] = [x for x in _list(p.get('photos_unused')) if isinstance(x, dict)]
     p['storyline'] = _text(p.get('storyline'))
     p['coverage'] = [{'subtopic': _text(_first(c, 'subtopic', 'item', 'topic')), 'section': unnumber(_text(_first(c, 'section', 'heading')))}
                      for c in _list(p.get('coverage')) if isinstance(c, dict)]
@@ -419,6 +421,44 @@ def align_notes(out, sections):
         if j is not None: used.add(j)                        # each returned section is used once
         aligned.append({**(notes[j] if j is not None else {'blocks': []}), 'heading': s['heading']})
     return {'notes': aligned}
+
+
+def plan_photos(plan, ids):
+    """Keep only the user's images (ids) in the plan's sections, each in the first section that names it. Returns the ids no section uses."""
+    used = set()
+    for s in plan['sections']:
+        s['photos'] = [i for i in dict.fromkeys(s.get('photos', [])) if i in ids and i not in used]
+        used.update(s['photos'])
+    return [i for i in ids if i not in used]
+
+
+def place_photos(out, sections, photos):
+    """Each user image in the section the plan gave it, once, with its stored path (photos: {id: {"path", "hint"}}). A photo figure
+    of an unknown or another section's image is removed; an image the writer left out goes after the section's first paragraph."""
+    for n, s in zip(out['notes'], sections):
+        want, seen = [i for i in s.get('photos', []) if i in photos], set()
+        def keep(bs):
+            kept = []
+            for b in bs:
+                if isinstance(b, dict) and b.get('kind') == 'photo':
+                    i = str(b['spec'].get('id', '')) if isinstance(b.get('spec'), dict) else ''
+                    if i not in want or i in seen: continue
+                    seen.add(i); b['spec'] = {'id': i, 'path': photos[i]['path']}
+                if isinstance(b, dict):
+                    for k in ('problem', 'solution', 'blocks'):
+                        if isinstance(b.get(k), list): b[k] = keep(b[k])
+                    for st in b.get('steps') or []:
+                        if isinstance(st, dict) and isinstance(st.get('blocks'), list): st['blocks'] = keep(st['blocks'])
+                kept.append(b)
+            return kept
+        n['blocks'] = keep(n['blocks'])
+        if not n['blocks']: continue            # a missing section is written by the repair first
+        at = next((j + 1 for j, b in enumerate(n['blocks']) if isinstance(b, dict) and b.get('type') == 'para'), 0)
+        for i in want:
+            if i not in seen:
+                n['blocks'].insert(at, {'type': 'figure', 'kind': 'photo', 'spec': {'id': i, 'path': photos[i]['path']}, 'title': photos[i].get('hint', ''), 'caption': ''})
+                at += 1
+    return out
 
 
 def _lines(x):
@@ -622,7 +662,7 @@ def block_problems(bs, allowed, path):
         if t not in allowed: out.append((p, f'unknown block type {t!r}; use one of {sorted(allowed)}', True))
         elif t in FIELD and not b.get(FIELD[t]): out.append((p, f'a "{t}" block needs a non-empty "{FIELD[t]}" field', True))
         elif t == 'table' and not (b.get('header') and b.get('rows')): out.append((p, 'a table needs "header" and "rows"', True))
-        elif t == 'figure' and b.get('kind') not in FIGURE_KINDS: out.append((p, f'figure kind {b.get("kind")!r} does not exist; use one of {sorted(FIGURE_KINDS)}', True))
+        elif t == 'figure' and b.get('kind') not in FIGURE_KINDS: out.append((p, f'figure kind {b.get("kind")!r} does not exist; use one of {sorted(FIGURE_KINDS - {"photo"})}', True))
         elif t == 'example' and not b.get('problem'): out.append((p, 'an example needs a "problem" and a "solution"', True))
         elif t in ('example', 'worked_example') and b.get('check'):
             m = check_mismatch(b['check']) or missing_data(b['check'], json.dumps(b.get('problem') or b.get('text') or '', ensure_ascii=False))

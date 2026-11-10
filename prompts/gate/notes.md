@@ -11,6 +11,7 @@ Sections to write now (from the plan):
 Other sections of this PDF, written separately at the same time (do not repeat their content): {{DONE}}
 Notation for the whole PDF (use exactly these symbols, units and conventions): {{NOTATION}}
 {{ILLUSTRATIONS}}
+{{PHOTOS}}
 GATE question archetypes to equip the student for: {{ARCHETYPES}}
 
 {{BOOK_NOTE}}

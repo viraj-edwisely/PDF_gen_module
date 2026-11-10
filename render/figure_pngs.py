@@ -8,7 +8,7 @@ import figures
 
 def walk(x, path=()):
     if isinstance(x, dict):
-        if 'kind' in x and 'spec' in x and not (x['kind'] == 'illustration' and not (x['spec'] or {}).get('file')):
+        if 'kind' in x and 'spec' in x and x['kind'] != 'photo' and not (x['kind'] == 'illustration' and not (x['spec'] or {}).get('file')):   # the user's own images are not reviewed
             yield path, x
         for k, v in x.items():
             if k != 'spec': yield from walk(v, path + (k,))

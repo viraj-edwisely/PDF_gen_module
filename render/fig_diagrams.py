@@ -196,6 +196,15 @@ def _kroki(code):
     return r.content
 
 
+def photo(spec, out):
+    """spec: {"id": "U1"}. An image the user uploaded for this PDF, shown as it is. The app fills in its file."""
+    from PIL import Image as PI
+    if not spec.get('file'): raise ValueError(f'the image {spec.get("id")!r} is not loaded')
+    im = PI.open(spec['file']).convert('RGB')
+    im.save(out, 'PNG', dpi=(max(im.width / 6.2, 150),) * 2)      # at most 6.2 inches wide, like an illustration; a small image is not blown up
+    return out
+
+
 def illustration(spec, out):
     """spec: {"concept": "four_stroke_si_engine" (a short key: one concept, one picture, reused by every PDF),
               "title": "Four-stroke SI engine", "description": "what the picture shows, for the illustrator: the view, the

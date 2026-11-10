@@ -56,7 +56,7 @@ def walk(x, path=(), key=None):
         if x.get('type') == 'code': return                  # code is shown as typed: $ is not maths there
         if 'kind' in x and 'spec' in x and (why := misuse(x['kind'], x['spec'])):
             yield {'path': list(path), 'what': 'layout', 'error': why}
-        elif 'kind' in x and 'spec' in x and not (x['kind'] == 'illustration' and not (x['spec'] or {}).get('file')):    # illustrations come from the library later
+        elif 'kind' in x and 'spec' in x and not (x['kind'] in ('illustration', 'photo') and not (x['spec'] or {}).get('file')):    # their pictures are loaded later
             try: n = figures.overlaps(figures.render(x['kind'], x['spec']))
             except Exception as e: yield {'path': list(path), 'what': 'figure', 'error': brief(e)[:240]}
             else:

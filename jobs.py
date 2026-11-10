@@ -1,7 +1,7 @@
 """Background workers: create, cancel and resume runs; process queued topics and uploaded books."""
-import contextlib, json, threading, time
+import contextlib, hashlib, io, json, threading, time
 import db, ingest, pipeline
-from config import COST_CAP, MODEL, POLL_SECONDS, STALE_SECONDS, TOPIC_PARALLEL, WORKERS
+from config import COST_CAP, IMAGE_PX, MODEL, POLL_SECONDS, STALE_SECONDS, TOPIC_PARALLEL, WORKERS
 
 # next queued topic; at most TOPIC_PARALLEL topics of one run are processed at the same time
 CLAIM = """update run_topics set status='running', step='Starting' where id = (
@@ -34,6 +34,19 @@ def create_run(mode, book_id, scope, options, user, pyq=None, pyq_from=None):
     pipeline.log(run, None, f'Run created by {user}: {len(names)} PDF(s), writer {MODEL["name"]}, thinking {options.get("effort")}')
     db.event(user, 'run started', run, title=title, type='GATE' if mode == 'gate' else 'Non-GATE', pdfs=len(names), writer=MODEL['name'], thinking=options.get('effort'), book=bool(book_id))
     return run
+
+
+def save_image(data):
+    """A user's image for a PDF, shrunk to IMAGE_PX on its longer side, on white, stored as JPEG. Returns its storage path; the path is
+    named by the content, so a changed copy of the run uses the same file."""
+    from PIL import Image, ImageOps
+    rgba = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGBA')      # phone photos keep their orientation
+    im = Image.new('RGB', rgba.size, 'white'); im.paste(rgba, mask=rgba.getchannel('A'))
+    im.thumbnail((IMAGE_PX, IMAGE_PX))
+    buf = io.BytesIO(); im.save(buf, 'JPEG', quality=88)
+    path = f'images/{hashlib.sha1(buf.getvalue()).hexdigest()[:20]}.jpg'
+    db.upload('outputs', path, buf.getvalue(), 'image/jpeg')
+    return path
 
 
 def cancel_run(run_id):

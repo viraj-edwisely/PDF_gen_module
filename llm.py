@@ -9,6 +9,7 @@ import base64, functools, importlib, json, re, threading
 from config import DEFAULT_EFFORT, IMAGE_MODEL, MODEL, RETRIES, cost, secret
 
 SLOT = threading.BoundedSemaphore(MODEL['concurrent'])
+JPEG = b'\xff\xd8'          # first bytes of a JPEG file (the user's own images are stored as JPEG; drawn figures are PNG)
 CUT_OFF = '{} reply was cut off at its length limit: write the same items more concisely (shorter explanations)'
 
 
@@ -28,8 +29,9 @@ def _guess(system, user, text):
 def _openai(system, user, max_tokens, effort, images=()):
     from openai import OpenAI
     text, usage, finish = '', (0, 0, 0), None
-    content = user if not images else [{'type': 'text', 'text': user}] + [            # PNGs shown to the model after the text, in order
-        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(png).decode(), 'detail': 'high'}} for png in images]
+    content = user if not images else [{'type': 'text', 'text': user}] + [            # PNG or JPEG images shown to the model after the text, in order
+        {'type': 'image_url', 'image_url': {'url': ('data:image/jpeg;base64,' if png[:2] == JPEG else 'data:image/png;base64,') + base64.b64encode(png).decode(), 'detail': 'high'}}
+        for png in images]
     for ev in OpenAI(api_key=secret('OPENAI_API_KEY'), max_retries=RETRIES).chat.completions.create(
             model=MODEL['name'], max_completion_tokens=max_tokens, reasoning_effort=effort, stream=True, stream_options={'include_usage': True},     # reasoning tokens count towards the limit and the price
             response_format={'type': 'json_object'}, messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': content}]):

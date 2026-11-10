@@ -462,7 +462,7 @@ KINDS = {'gantt': gantt, 'timeline': gantt, 'plot': plot, 'bars': bars, 'graph':
          'geometry': fig_geometry.geometry, 'block': fig_diagrams.block, 'logic': fig_diagrams.logic, 'mermaid': fig_diagrams.mermaid,
          'beam': fig_physics.beam, 'mohr': fig_physics.mohr, 'pressure': fig_physics.pressure, 'waveform': fig_physics.waveform,
          'spectrum': fig_physics.spectrum, 'cycle': fig_physics.cycle, 'control': fig_physics.control, 'mccabe': fig_physics.mccabe, 'vle': fig_physics.vle, 'process': fig_process.process,
-         'illustration': fig_diagrams.illustration}
+         'illustration': fig_diagrams.illustration, 'photo': fig_diagrams.photo}
 
 
 GREEK = {'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε', 'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'kappa': 'κ',
@@ -609,7 +609,7 @@ def reference():
     """Markdown for the prompt: each kind's spec (its docstring) and one working example per kind from GALLERY."""
     out = []
     for kind, fn in KINDS.items():
-        if kind == 'timeline': continue
+        if kind in ('timeline', 'photo'): continue          # a photo is the user's own image: the notes prompt says how to place one
         ex = next((json.dumps(sp, ensure_ascii=False) for k, sp in GALLERY.values() if k == kind), None)
         head = f'### kind "{kind}"' + (' (alias "timeline")' if kind == 'gantt' else '')
         out.append(head + '\n' + textwrap.dedent('    ' + fn.__doc__.strip()) + (f'\nWorking example spec:\n{ex}' if ex else ''))

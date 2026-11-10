@@ -34,6 +34,10 @@ class FakeDB:
 def reply_for(user):
     """The scripted model: a plan, notes with structured examples, questions, a revision page, a clean visual review."""
     if 'Plan the GATE topic PDF' in user:
+        if 'their own images' in user:          # the user's images: U1 goes in the second section, U2 fits nowhere
+            plan = reply_for(user.replace('their own images', ''))
+            plan['sections'][1]['photos'] = ['U1', 'U9']
+            return {**plan, 'photos_unused': [{'id': 'U2', 'reason': 'it shows a different topic'}]}
         return {'subtitle': 'Topic guide', 'syllabus_line': 'CPU scheduling', 'objectives': ['Compute waiting times'], 'prerequisites': ['Processes'],
                 'storyline': 'From what a scheduler does to each algorithm and how GATE compares them.',
                 'coverage': [{'subtopic': 'FCFS', 'section': SECTIONS[1]}, {'subtopic': 'SJF', 'section': SECTIONS[2]}],
@@ -106,3 +110,58 @@ def test_a_requested_change_rewrites_only_what_was_asked_in_one_call(fake):
     assert after['notes'][0]['blocks'][0] == {'type': 'para', 'text': 'Changed intuition.'}
     assert after['notes'][1:] == before['notes'][1:] and after['practice'] == before['practice'] and after['notes'][0]['blocks'][1:] == before['notes'][0]['blocks'][1:]
     assert any(w.startswith('Changed: Section') for w in fake.warnings) and any('notes/99/blocks/0' in w and 'not applied' in w for w in fake.warnings)
+
+
+def jpeg(color):
+    import io
+    from PIL import Image
+    out = io.BytesIO(); Image.new('RGB', (800, 500), color).save(out, 'JPEG'); return out.getvalue()
+
+
+def test_the_users_images_are_placed_by_the_planner_and_drawn_in_the_pdf(fake):
+    fake.files.update({'images/a.jpg': jpeg('red'), 'images/b.jpg': jpeg('blue')})
+    images = [{'id': 'U1', 'name': 'gantt_board.jpg', 'hint': 'a Gantt chart on a board', 'path': 'images/a.jpg'},
+              {'id': 'U2', 'name': 'turbine.jpg', 'hint': '', 'path': 'images/b.jpg'}]
+    run = {'id': 1, 'mode': 'gate', 'book_id': None, 'scope_start': None, 'scope_end': None, 'created_by': 'a@b.c',
+           'options': {'paper': 'CS', 'subject': 'Operating Systems', 'subtopics': {'CPU scheduling': ['FCFS', 'SJF']}, 'verify': True, 'visual_review': True,
+                       'images': {'CPU scheduling': images}}}
+    pipeline.process({'id': 7, 'name': 'CPU scheduling'}, run)
+    plan_call = next(c for c in fake.calls if c[0].startswith('Plan the GATE'))
+    assert plan_call[1] == 2                                                                 # the planner sees both images
+    assert sorted(n for u, n in fake.calls if u.startswith('Write concept-note')) == [0, 1]  # only the notes call of its section sees U1
+    content = json.loads(fake.files['1/7.json'])
+    photos = [(i, b) for i, n in enumerate(content['notes']) for b in C.walk_blocks(n['blocks']) if b.get('kind') == 'photo']
+    assert [(i, b['spec']['id'], b['spec']['path']) for i, b in photos] == [(1, 'U1', 'images/a.jpg')]     # the writer left it out: put in by code
+    assert content['notes'][1]['blocks'][1]['kind'] == 'photo'                                # after the section's first paragraph
+    assert any('"turbine.jpg" was left out: it shows a different topic' in w for w in fake.warnings), fake.warnings
+    assert not [w for w in fake.warnings if 'could not be' in w or 'drawn' in w], fake.warnings
+    pipeline.process({'id': 7, 'name': 'CPU scheduling'}, run)                                # resumed: the notes are not repeated
+    assert sum('turbine.jpg' in w for w in fake.warnings) == 1
+
+
+def test_each_image_stays_once_in_its_own_section():
+    photos = {'U1': {'path': 'p1', 'hint': 'h1'}, 'U2': {'path': 'p2', 'hint': ''}}
+    plan = {'sections': [{'heading': 'A', 'photos': ['U1', 'U1', 'U7']}, {'heading': 'B', 'photos': ['U1', 'U2']}, {'heading': 'C', 'photos': []}]}
+    assert C.plan_photos(plan, ['U1', 'U2', 'U3']) == ['U3'] and [s['photos'] for s in plan['sections']] == [['U1'], ['U2'], []]
+    fig = lambda i: {'type': 'figure', 'kind': 'photo', 'spec': {'id': i}}
+    out = {'notes': [{'heading': 'A', 'blocks': [{'type': 'para', 'text': 'x'}, {'type': 'example', 'problem': [fig('U1')], 'steps': [{'blocks': [fig('U1')]}]}]},
+                     {'heading': 'B', 'blocks': [fig('U1'), {'type': 'para', 'text': 'y'}]}, {'heading': 'C', 'blocks': []}]}
+    C.place_photos(out, plan['sections'], photos)
+    a, b, c = (n['blocks'] for n in out['notes'])
+    assert a[1]['problem'] == [{**fig('U1'), 'spec': {'id': 'U1', 'path': 'p1'}}] and a[1]['steps'][0]['blocks'] == []     # kept once, where the writer put it
+    assert [x.get('kind') for x in b] == [None, 'photo'] and b[1]['spec'] == {'id': 'U2', 'path': 'p2'}                    # U1 removed, U2 added after the paragraph
+    assert c == []                                                                       # a missing section is left for the repair
+
+
+def test_an_uploaded_image_is_shrunk_and_stored_as_jpeg(monkeypatch):
+    import io
+    from PIL import Image
+    import jobs
+    stored = {}
+    monkeypatch.setattr(jobs.db, 'upload', lambda bucket, path, data, ctype='': stored.update({path: data}))
+    src = io.BytesIO(); Image.new('RGBA', (4000, 1000), (0, 0, 0, 0)).save(src, 'PNG')
+    path = jobs.save_image(src.getvalue())
+    im = Image.open(io.BytesIO(stored[path]))
+    assert path.startswith('images/') and path.endswith('.jpg') and im.format == 'JPEG' and im.size == (1600, 400)
+    assert im.getpixel((10, 10)) == (255, 255, 255)                                         # transparent becomes white, not black
+    assert jobs.save_image(src.getvalue()) == path                                           # the same image, the same file

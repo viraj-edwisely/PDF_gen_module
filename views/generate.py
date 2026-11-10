@@ -3,7 +3,7 @@ import io, json, time
 import pandas as pd
 import streamlit as st
 import content as C, db, jobs, pyq
-from config import (COST_CAP, DEFAULT_EFFORT, EFFORTS, IMAGE_MODEL, ILLUSTRATIONS_PER_RUN, MAX_TOPICS, MAX_URLS, MODEL, SCOPE_TOKEN_BUDGET,
+from config import (COST_CAP, DEFAULT_EFFORT, EFFORTS, IMAGE_MODEL, ILLUSTRATIONS_PER_RUN, MAX_IMAGES, MAX_TOPICS, MAX_URLS, MODEL, SCOPE_TOKEN_BUDGET,
                     TOPIC_PARALLEL, TOPIC_TOKEN_BUDGET, cost)
 from ui import user
 
@@ -100,6 +100,7 @@ with st.expander('Import topics from an Excel sheet'):
     c2.download_button('Download the template', template.getvalue(), 'topics_template.xlsx')
     if msg := st.session_state.pop('import_msg', None): getattr(st, msg[0])(msg[1])
 names, sources, subtopics, numbers = [], {}, {}, {}      # sources: topic -> ('PDF' | 'Word' | 'Links', files or links) with its previous-year questions; numbers: topic -> unit and topic number
+images = {}                                              # GATE: topic -> [(uploaded image, what the user says it shows)]
 for k, i in enumerate(ids, 1):
     if mode == 'gate': unit_col, num_col, name_col, kind_col, remove_col = st.columns([1.3, 1.3, 5, 3, 1], vertical_alignment='bottom')
     else: name_col, remove_col = st.columns([9, 1], vertical_alignment='bottom')
@@ -118,8 +119,15 @@ for k, i in enumerate(ids, 1):
     sub = st.text_input(f'Subtopics of topic {k} (optional)', key=f'sub{i}', placeholder='e.g. Buoyant force, Centre of buoyancy, Metacentric height',
                         help='Comma-separated. Each one gets covered in the PDF; they are listed on the cover, not put in the title. '
                              'A list in brackets at the end of the topic name is read as subtopics too.').strip()
+    pics = st.file_uploader(f'Your images for topic {k} (optional, up to {MAX_IMAGES})', type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key=f'imgs{i}',
+                            help='Photos or diagrams to use in this PDF. The planner looks at each one and puts it in the section it fits best; '
+                                 'one that fits no section is left out, with a note saying why.') if mode == 'gate' else []
+    if pics:
+        with st.expander('Say what each image shows (optional: it helps place them)'):
+            hints = [st.text_input(f.name, key=f'imghint{i}_{f.file_id}', placeholder='e.g. cut-away of a Pelton wheel').strip() for f in pics]
     name, subs = C.split_topic(name, sub)
     if name and subs: st.caption(f'Title: **{name}** · covers {len(subs)} subtopic{"s" if len(subs) != 1 else ""}: ' + ', '.join(subs))
+    if name and pics: images.setdefault(name, list(zip(pics, hints)))
     if name and name not in names: names.append(name)
     if name and subs: subtopics[name] = subs
     if name and mode == 'gate': numbers.setdefault(name, {'unit': unit_no, 'topic': topic_no})
@@ -170,6 +178,7 @@ if mode == 'gate' and options.get('visual_review'):
     estimate += n * (5 * cost(15_000, 2_000) + 2 * cost(30_000, 8_000))      # figures and pages looked at in batches, and fixing what they found (two rounds)
 if mode == 'gate' and options.get('illustrations'):
     estimate += ILLUSTRATIONS_PER_RUN * IMAGE_MODEL['price'] * 1.5      # at most this many new pictures per run, some drawn twice
+estimate += cost(3_000 * sum(map(len, images.values())), 0)       # each image is looked at twice (plan and notes), about 1,500 tokens each time
 minutes = (-(-n // TOPIC_PARALLEL) * 10) if mode == 'gate' else 12
 
 errors = []
@@ -182,6 +191,7 @@ if mode == 'gate':
     elif len({tuple(n.values()) for n in numbers.values()}) < len(numbers): errors.append('Two topics have the same unit and topic number.')
     if any(len(got) > MAX_URLS for _, got in sources.values()): errors.append(f'At most {MAX_URLS} PYQ links or files per topic.')
     if any(kind == 'Links' and not u.startswith(('http://', 'https://')) for kind, got in sources.values() for u in got): errors.append('PYQ links must start with http:// or https://')
+    if any(len(got) > MAX_IMAGES for got in images.values()): errors.append(f'At most {MAX_IMAGES} images per topic.')
 if not options['subject']: errors.append('Enter the subject.')
 
 with st.container(border=True):
@@ -190,7 +200,7 @@ with st.container(border=True):
     st.markdown(f"**{what}** · {MODEL['name']}, {effort} thinking · source: {src}{' · with your prompt' if options['prompt'] else ''}\n\n"
                 f"Estimated cost **about ${estimate:.2f}**, time **about {minutes} minutes**. A run stops by itself at ${COST_CAP:.0f}; finished PDFs are kept.")
     if errors: st.info('Still needed: ' + ' '.join(errors))
-    same = json.dumps([mode, book and book['id'], start, end, options, sorted(sources)], sort_keys=True, default=str)
+    same = json.dumps([mode, book and book['id'], start, end, options, sorted(sources), {t: [f.file_id for f, _ in got] for t, got in images.items()}], sort_keys=True, default=str)
     last = st.session_state.get('last_run')                   # (settings, time, run id): a double click must not start the run twice
     if st.button('Generate', type='primary', disabled=bool(errors)):
         if last and last[0] == same and time.time() - last[1] < 120:
@@ -198,6 +208,9 @@ with st.container(border=True):
         try: sources_read = {t: {'urls': got} if kind == 'Links' else {'texts': [pyq.file_text(f.name, f.getvalue())[:120_000] for f in got]}
                              for t, (kind, got) in sources.items()}
         except Exception as e: st.error(f'A PYQ file could not be read: {e}. Save it again as a digital PDF or .docx and retry.'); st.stop()
+        try: options['images'] = {t: [{'id': f'U{j}', 'name': f.name, 'hint': h, 'path': jobs.save_image(f.getvalue())} for j, (f, h) in enumerate(got, 1)]
+                                  for t, got in images.items()}
+        except Exception as e: st.error(f'An image could not be read or stored: {e}. Save it again as PNG or JPEG and retry.'); st.stop()
         run_id = jobs.create_run(mode, book['id'] if book else None, (start and int(start), end and int(end)), options, user(), pyq=sources_read)
         st.session_state.last_run = (same, time.time(), run_id)
         st.success(f'Run #{run_id} started.')
