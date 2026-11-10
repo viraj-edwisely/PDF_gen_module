@@ -387,10 +387,22 @@ def gate(job):
     photo_note = fill(read('gate/plan_photos.md'), PHOTOS=photo_lines(photos, list(photos))) if photos else ''
     plan = job.ask('plan', fill(read('gate/plan.md'), **base, PYQS=pyq_brief, SYLLABUS=o.get('syllabus_line') or '', REFERENCE=ref_text or '(none)', PHOTOS=photo_note),
                    tidy=C.gate_plan, problems=lambda p: C.gate_plan_problems(p, subtopics), images=list(shots.values()))
-    unused = C.plan_photos(plan, list(photos))
+    unused = C.plan_photos(plan, photos)
+    why = {str(x.get('id')).upper(): str(x.get('reason') or '') for x in plan['photos_unused']}
+    lost = [i for i in unused if not why.get(i)]
+    if lost:                # images the planner neither placed nor explained: one small call does only that
+        job.progress('Placing your images')
+        heads = [s['heading'] for s in plan['sections']]
+        brief = [{'heading': s['heading'], 'ideas': s.get('ideas', ''), 'figure': s.get('figure', '')} for s in plan['sections']]
+        try: places = job.ask('photo_placement', fill(read('gate/place_photos.md'), TOPIC=topic, SECTIONS=json.dumps(brief, ensure_ascii=False), PHOTOS=photo_lines(photos, lost)),
+                              tidy=lambda x: C.photo_places(x, lost, heads), images=[shots[i] for i in lost])['places']
+        except llm.LLMError as e: job.log(f'placing the images failed: {e}'); places = []
+        for p in places:
+            if p['section'] is not None: plan['sections'][p['section']]['photos'].append(p['id'])
+            else: why[p['id']] = p['reason']
+        unused = [i for i in unused if not any(i in s['photos'] for s in plan['sections'])]
     def report():           # once (a saved step), so a resumed run does not repeat the notes
-        why = {str(x.get('id')): str(x.get('reason') or '') for x in plan['photos_unused']}
-        for i in unused: job.warn(f'Your image "{photos[i].get("name")}" was left out: ' + (why.get(i) or 'the planner found no section it fits') + '.')
+        for i in unused: job.warn(f'Your image "{photos[i].get("name")}" was left out: ' + (why.get(i) or 'no section of the plan fits it') + '.')
         placed = {photos[i].get('name'): s['heading'] for s in plan['sections'] for i in s['photos']}
         job.log('Your images: ' + '; '.join(f'"{n}" -> section "{h}"' for n, h in placed.items()))
         return placed

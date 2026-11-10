@@ -18,7 +18,7 @@ standard and which figures and derivations are standard for this topic. Never co
 
 Previous-year GATE questions already found for this topic (use their archetypes; may be empty):
 {{PYQS}}
-{{PHOTOS}}
+
 Return this JSON:
 {
   "subtitle": "one line for the cover, e.g. Topic guide: concept notes, worked examples, previous-year GATE questions, practice and sample paper",
@@ -57,3 +57,4 @@ Rules
   with a "no_figure_reason". No decorative figures.
 - If the syllabus_line above is already a sentence, copy it exactly; if it is empty, write one line in the style of the
   official GATE syllabus for this topic.
+{{PHOTOS}}

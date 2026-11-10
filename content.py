@@ -388,7 +388,6 @@ def gate_plan(p):
         s['heading'] = unnumber(_text(_first(s, 'heading', 'title', 'name') or ''))
         s['figure'] = _text(s.get('figure') or '')
         for k in ('builds_on', 'no_figure_reason'): s[k] = _text(s.get(k) or '')
-        s['photos'] = [_text(x).strip() for x in _list(s.get('photos')) if isinstance(x, str)]
     p['photos_unused'] = [x for x in _list(p.get('photos_unused')) if isinstance(x, dict)]
     p['storyline'] = _text(p.get('storyline'))
     p['coverage'] = [{'subtopic': _text(_first(c, 'subtopic', 'item', 'topic')), 'section': unnumber(_text(_first(c, 'section', 'heading')))}
@@ -423,13 +422,31 @@ def align_notes(out, sections):
     return {'notes': aligned}
 
 
-def plan_photos(plan, ids):
-    """Keep only the user's images (ids) in the plan's sections, each in the first section that names it. Returns the ids no section uses."""
+def plan_photos(plan, photos):
+    """Set each section's "photos" to the user's images it uses, read however the planner wrote them: ids in any photo or image field
+    ("U1", "u1", [{"id": "U1"}]), "photo U1" in the figure line, or the file name anywhere in the section. Each image goes in the first
+    section that names it. photos: {id: {"name", ...}}. Returns the ids no section uses."""
     used = set()
     for s in plan['sections']:
-        s['photos'] = [i for i in dict.fromkeys(s.get('photos', [])) if i in ids and i not in used]
+        tagged = json.dumps([v for k, v in s.items() if re.search('photo|image', k, re.I)])
+        found = [i.upper() for i in re.findall(r'\b[Uu]\d+\b', tagged) + re.findall(r'(?i)\bphoto\s+(U\d+)\b', s.get('figure', ''))]
+        text = json.dumps(s, ensure_ascii=False).lower()
+        found += [i for i, p in photos.items() if p.get('name') and p['name'].lower() in text]
+        s['photos'] = [i for i in dict.fromkeys(found) if i in photos and i not in used]
         used.update(s['photos'])
-    return [i for i in ids if i not in used]
+    return [i for i in photos if i not in used]
+
+
+def photo_places(out, ids, headings):
+    """The reply of the image-placing call: {"places": [{"id", "section": index of the matched heading or None, "reason"}]}, for the given ids."""
+    keys = [_key(h) for h in headings]
+    places = {}
+    for x in _list(out.get('places') if isinstance(out, dict) else None):
+        i = str(x.get('id', '')).strip().upper() if isinstance(x, dict) else ''
+        if i not in ids or i in places: continue
+        close = difflib.get_close_matches(_key(x.get('section') or ''), keys, n=1, cutoff=0.6) if x.get('section') else []
+        places[i] = {'id': i, 'section': keys.index(close[0]) if close else None, 'reason': _text(x.get('reason') or '')}
+    return {'places': list(places.values())}
 
 
 def place_photos(out, sections, photos):

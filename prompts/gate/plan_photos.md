@@ -1,5 +1,6 @@
 
-The user has supplied their own images for this PDF. They are shown after this text, in this order:
+The user's own images (required: the JSON must account for every one). The user chose them for this topic, so place every
+image that shows anything this PDF teaches. They are shown after this text, in this order:
 {{PHOTOS}}
 
 Look at each image and put it in the one section it illustrates best: add its id to that section's "photos" list

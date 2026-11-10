@@ -34,8 +34,8 @@ class FakeDB:
 def reply_for(user):
     """The scripted model: a plan, notes with structured examples, questions, a revision page, a clean visual review."""
     if 'Plan the GATE topic PDF' in user:
-        if 'their own images' in user:          # the user's images: U1 goes in the second section, U2 fits nowhere
-            plan = reply_for(user.replace('their own images', ''))
+        if "own images (required" in user and 'IGNORE' not in user:     # the user's images: U1 goes in the second section, U2 fits nowhere
+            plan = reply_for(user.replace('own images (required', ''))
             plan['sections'][1]['photos'] = ['U1', 'U9']
             return {**plan, 'photos_unused': [{'id': 'U2', 'reason': 'it shows a different topic'}]}
         return {'subtitle': 'Topic guide', 'syllabus_line': 'CPU scheduling', 'objectives': ['Compute waiting times'], 'prerequisites': ['Processes'],
@@ -44,6 +44,10 @@ def reply_for(user):
                 'notation': [{'symbol': 'WT', 'meaning': 'waiting time', 'unit': 'ms', 'convention': 'WT = TAT - BT'}],
                 'sections': [{'heading': h, 'ideas': 'x', 'example': 'y', 'figure': 'gantt: schedule -> waiting time', 'builds_on': ''} for h in SECTIONS],
                 'archetypes': ['average waiting time']}
+    if 'The user supplied these images' in user:      # the image-placing call: the first image to the third section, the rest left out
+        heads = re.findall(r'"heading": "([^"]+)"', user)
+        ids = re.findall(r'^- (U\d+)', user, re.M)
+        return {'places': [{'id': ids[0].lower(), 'section': heads[2]}] + [{'id': i, 'section': '', 'reason': 'not this topic'} for i in ids[1:]]}
     if 'Write concept-note sections' in user:
         heads = re.findall(r'"heading": "([^"]+)"', user.split('Sections to write now')[1].split('Other sections')[0])
         return {'notes': [{'heading': h, 'blocks': [
@@ -142,7 +146,7 @@ def test_the_users_images_are_placed_by_the_planner_and_drawn_in_the_pdf(fake):
 def test_each_image_stays_once_in_its_own_section():
     photos = {'U1': {'path': 'p1', 'hint': 'h1'}, 'U2': {'path': 'p2', 'hint': ''}}
     plan = {'sections': [{'heading': 'A', 'photos': ['U1', 'U1', 'U7']}, {'heading': 'B', 'photos': ['U1', 'U2']}, {'heading': 'C', 'photos': []}]}
-    assert C.plan_photos(plan, ['U1', 'U2', 'U3']) == ['U3'] and [s['photos'] for s in plan['sections']] == [['U1'], ['U2'], []]
+    assert C.plan_photos(plan, {**photos, 'U3': {}}) == ['U3'] and [s['photos'] for s in plan['sections']] == [['U1'], ['U2'], []]
     fig = lambda i: {'type': 'figure', 'kind': 'photo', 'spec': {'id': i}}
     out = {'notes': [{'heading': 'A', 'blocks': [{'type': 'para', 'text': 'x'}, {'type': 'example', 'problem': [fig('U1')], 'steps': [{'blocks': [fig('U1')]}]}]},
                      {'heading': 'B', 'blocks': [fig('U1'), {'type': 'para', 'text': 'y'}]}, {'heading': 'C', 'blocks': []}]}
@@ -151,6 +155,28 @@ def test_each_image_stays_once_in_its_own_section():
     assert a[1]['problem'] == [{**fig('U1'), 'spec': {'id': 'U1', 'path': 'p1'}}] and a[1]['steps'][0]['blocks'] == []     # kept once, where the writer put it
     assert [x.get('kind') for x in b] == [None, 'photo'] and b[1]['spec'] == {'id': 'U2', 'path': 'p2'}                    # U1 removed, U2 added after the paragraph
     assert c == []                                                                       # a missing section is left for the repair
+
+
+def test_image_ids_are_read_however_the_planner_writes_them():
+    photos = {f'U{k}': {'name': n} for k, n in enumerate(['a.jpg', 'b.jpg', 'c.jpg', 'pn-barrier.jpg', 'e.jpg'], 1)}
+    plan = C.gate_plan({'objectives': ['x'], 'sections': [{'heading': 'A', 'photos': 'u1'}, {'heading': 'B', 'images': [{'id': 'U2'}]},
+                                                          {'heading': 'C', 'figure': 'photo U3: biased pn junction -> depletion width'},
+                                                          {'heading': 'D', 'figure': 'cycle: states U1 to U5 of internal energy'},
+                                                          {'heading': 'E', 'ideas': 'barrier potential, as in pn-barrier.jpg'}]})
+    assert C.plan_photos(plan, photos) == ['U5'] and [s['photos'] for s in plan['sections']] == [['U1'], ['U2'], ['U3'], [], ['U4']]   # an energy symbol is not an image
+
+
+def test_images_the_planner_ignores_are_placed_by_a_call_of_their_own(fake):
+    fake.files.update({'images/a.jpg': jpeg('red'), 'images/b.jpg': jpeg('blue')})
+    images = [{'id': 'U1', 'name': 'pn.png', 'hint': '', 'path': 'images/a.jpg'}, {'id': 'U2', 'name': 'other.jpg', 'hint': '', 'path': 'images/b.jpg'}]
+    run = {'id': 1, 'mode': 'gate', 'book_id': None, 'scope_start': None, 'scope_end': None, 'created_by': 'a@b.c',
+           'options': {'paper': 'CS', 'subject': 'Operating Systems', 'subtopics': {'CPU scheduling': ['FCFS', 'SJF']}, 'verify': False, 'visual_review': False,
+                       'images': {'CPU scheduling': images}, 'prompt': 'IGNORE'}}         # the planner ignores the images, as in a real run
+    pipeline.process({'id': 7, 'name': 'CPU scheduling'}, run)
+    assert [n for u, n in fake.calls if u.startswith('The GATE topic PDF on')] == [2]       # one placing call, with both images
+    content = json.loads(fake.files['1/7.json'])
+    assert [b['spec']['id'] for b in C.walk_blocks(content['notes'][2]['blocks']) if b.get('kind') == 'photo'] == ['U1']
+    assert [w for w in fake.warnings if 'left out' in w] == ['Your image "other.jpg" was left out: not this topic.'], fake.warnings
 
 
 def test_an_uploaded_image_is_shrunk_and_stored_as_jpeg(monkeypatch):
