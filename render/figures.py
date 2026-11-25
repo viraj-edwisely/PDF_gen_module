@@ -447,8 +447,8 @@ def text_label(s, plain=False):
     s = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
     s = re.sub(r'\\([A-Za-z]+)', lambda m: GREEK.get(m.group(1), m.group(1)), s)
     s = re.sub(r'_\{?(\d+)\}?', lambda m: m.group(1).translate(SUB), s)
-    if not plain:                                          # f_c, A_{max}: a letter subscript as maths, word by word (spaces stay)
-        s = re.sub(r'(?<![A-Za-z$\\])([A-Za-zα-ωΑ-Ω])_\{?([A-Za-z]+)\}?', r'$\1_{\2}$', s)
+    if not plain:                                          # f_c, A_{max}, V_s1: a letter subscript as maths, word by word (spaces stay)
+        s = re.sub(r'(?<![A-Za-z$\\])([A-Za-zα-ωΑ-Ω])_\{?([A-Za-z][A-Za-z0-9]*)\}?', r'$\1_{\2}$', s)
     return s.replace('{', '').replace('}', '') if tex else s
 
 

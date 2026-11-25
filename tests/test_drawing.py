@@ -60,8 +60,11 @@ LOOP = {'a': [0, 2], 'b': [3, 2], 'g': [0, 0], 'h': [3, 0]}          # a source 
 BROKEN_CIRCUITS = [        # (what a writer got wrong, nodes, parts, a phrase the message must contain): each was drawn silently before
     ('a part left open', dict(LOOP, c=[6, 2]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R4', 'R', 'b', 'c']], 'left open'),
     ('a galvanometer shorted by the rail', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['G', 'R', 'g', 'h']], 'shorted'),
-    ('a wire over a node', dict(LOOP, m=[1.5, 0]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R3', 'R', 'm', 'b']], 'runs over node'),
-    ('a diagonal part', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'h'], ['', 'W', 'g', 'h']], 'horizontal or vertical'),
+    ('a part over a node', dict(LOOP, c=[6, 2], k=[6, 0]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'c'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['', 'W', 'h', 'k'], ['R3', 'R', 'c', 'k']], 'runs over node'),
+    ('every grounded part on one node (SPICE)', {'a': [0, 2], 'n': [3, 2], 'g': [0, 0]}, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'n'], ['R2', 'R', 'n', 'g']],
+     r"new node at \[3, 0\] and join that node to 'g'"),
+    ('parallel parts on the same nodes (SPICE)', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['G', 'Idep', 'b', 'h'], ['', 'W', 'g', 'h']],
+     r'draw G beside R2, between new nodes at \[4, 2\] and \[4, 0\]'),
     ('lines crossing', dict(LOOP, c=[1.5, 3], d=[1.5, 1]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R3', 'R', 'c', 'd']], 'crosses'),
     ('a wire through the op-amp', {'s': [0, 2.5], 'g': [0, 1], 'k': [3, 1]},
      [['V', 'V', 's', 'g'], ['R1', 'R', 's', 'm'], ['U1', 'opamp', 'm', 'p', 'o', '', {'at': [4, 2]}], ['', 'W', 'p', 'k'], ['', 'W', 'g', 'k'], ['RL', 'R', 'o', 'm']], 'symbol of U1'),
@@ -73,6 +76,14 @@ BROKEN_CIRCUITS = [        # (what a writer got wrong, nodes, parts, a phrase th
 def test_circuit_refuses_what_a_textbook_never_prints(what, nodes, parts, says):
     with pytest.raises(ValueError, match=says):
         figures.render('circuit', {'nodes': nodes, 'parts': parts})
+
+
+def test_circuit_wire_over_nodes_joins_them_and_repeats_are_drawn_once():
+    """A return rail written as one wire under the parts' nodes, plus the same wire again: what the picture shows is meant."""
+    spec = {'nodes': dict(LOOP, c=[6, 2], k=[6, 0]), 'parts': [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'b', 'c'],
+                                                              ['Z1', 'Z', 'c', 'k', 'Z_L'], ['', 'W', 'g', 'k'], ['', 'W', 'k', 'g']]}
+    import fig_circuit
+    assert fig_circuit.check(spec) == [] and figures.overlaps(figures.render('circuit', spec)) == 0
 
 
 def test_circuit_ground_symbol_never_sits_on_a_line():

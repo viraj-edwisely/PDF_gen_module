@@ -58,7 +58,7 @@ def walk(x, path=(), key=None):
             yield {'path': list(path), 'what': 'layout', 'error': why}
         elif 'kind' in x and 'spec' in x and not (x['kind'] in ('illustration', 'photo') and not (x['spec'] or {}).get('file')):    # their pictures are loaded later
             try: n = figures.overlaps(figures.render(x['kind'], x['spec']))
-            except Exception as e: yield {'path': list(path), 'what': 'figure', 'error': brief(e)[:240]}
+            except Exception as e: yield {'path': list(path), 'what': 'figure', 'error': brief(e)[:800]}       # a circuit gives up to 3 fixes, each naming the nodes
             else:
                 if n: yield {'path': list(path), 'what': 'layout', 'error': f'{n} label(s) in this figure still overlap other labels or '
                              'run off the plot: shorten the labels, label fewer points, or spread them out'}
