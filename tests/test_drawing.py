@@ -56,12 +56,38 @@ def test_awkward_figures_draw_and_fit(title, kind, spec):
     assert w_in < 8.5, f'{title}: {w_in:.1f} in wide, the PDF would shrink its text'
 
 
-def test_circuit_anchors_are_positions_in_the_drawing():
-    import schemdraw, schemdraw.elements as E
-    with schemdraw.Drawing(show=False) as d:
-        r = E.Resistor().right(); d += r
-        n = E.Dot(); d += n
-        assert tuple(figures._anchor({'n': n}, 'n.center')) == tuple(r.end) != (0, 0)
+LOOP = {'a': [0, 2], 'b': [3, 2], 'g': [0, 0], 'h': [3, 0]}          # a source and a resistor joined by a wire at the bottom
+BROKEN_CIRCUITS = [        # (what a writer got wrong, nodes, parts, a phrase the message must contain): each was drawn silently before
+    ('a part left open', dict(LOOP, c=[6, 2]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R4', 'R', 'b', 'c']], 'left open'),
+    ('a galvanometer shorted by the rail', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['G', 'R', 'g', 'h']], 'shorted'),
+    ('a wire over a node', dict(LOOP, m=[1.5, 0]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R3', 'R', 'm', 'b']], 'runs over node'),
+    ('a diagonal part', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'h'], ['', 'W', 'g', 'h']], 'horizontal or vertical'),
+    ('lines crossing', dict(LOOP, c=[1.5, 3], d=[1.5, 1]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R3', 'R', 'c', 'd']], 'crosses'),
+    ('a wire through the op-amp', {'s': [0, 2.5], 'g': [0, 1], 'k': [3, 1]},
+     [['V', 'V', 's', 'g'], ['R1', 'R', 's', 'm'], ['U1', 'opamp', 'm', 'p', 'o', '', {'at': [4, 2]}], ['', 'W', 'p', 'k'], ['', 'W', 'g', 'k'], ['RL', 'R', 'o', 'm']], 'symbol of U1'),
+    ('a pin node given another place', dict(LOOP, m=[2, 2]), [['V1', 'V', 'a', 'g'], ['U1', 'opamp', 'm', 'g', 'b', '', {'at': [4, 2]}]], 'leave pin nodes out'),
+]
+
+
+@pytest.mark.parametrize('what,nodes,parts,says', BROKEN_CIRCUITS, ids=[b[0] for b in BROKEN_CIRCUITS])
+def test_circuit_refuses_what_a_textbook_never_prints(what, nodes, parts, says):
+    with pytest.raises(ValueError, match=says):
+        figures.render('circuit', {'nodes': nodes, 'parts': parts})
+
+
+def test_circuit_ground_symbol_never_sits_on_a_line():
+    spec = {'nodes': LOOP, 'parts': [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h']], 'ground': ['b']}
+    with pytest.raises(ValueError, match='line going down'): figures.render('circuit', spec)
+
+
+def test_circuit_transistors_and_transformer_draw_without_collisions():
+    bjt = {'nodes': {'vcc': [3, 5], 'b': [0, 2], 'g': [0, -1.5], 'g2': [3, -1.5]}, 'terminals': {'vcc': '+12 V'}, 'ground': ['g2'],
+           'parts': [['Q1', 'npn', 'bb', 'cc', 'ee', 'Q₁\nβ = 100', {'at': [3, 2]}], ['RC', 'R', 'vcc', 'cc', '2 kΩ'], ['RB', 'R', 'b', 'bb', '100 kΩ', {'current': 'I_B'}],
+                     ['VB', 'V', 'b', 'g', '5 V'], ['RE', 'R', 'ee', 'g2', '1 kΩ'], ['', 'W', 'g', 'g2']]}
+    fet = {'nodes': {'vdd': [5, 5], 'r': [5, 3.5], 'gnd': [5, -1], 'mx': [2, 1], 'nx': [2, -1]}, 'terminals': {'vdd': 'V_DD'}, 'ground': ['gnd'],
+           'parts': [['T1', 'xfmr', 'a', 'a0', 'm', 'n', '1:2', {'at': [1, 1]}], ['M1', 'nmos', 'gg', 'dd', 'ss', 'M₁', {'at': [5, 1]}], ['Vp', 'Vac', 'a', 'a0', 'v_p'],
+                     ['', 'W', 'm', 'mx'], ['', 'W', 'mx', 'gg'], ['', 'W', 'n', 'nx'], ['', 'W', 'nx', 'gnd'], ['', 'W', 'ss', 'gnd'], ['RD', 'R', 'vdd', 'r', 'R_D'], ['', 'W', 'r', 'dd']]}
+    for spec in (bjt, fet): assert figures.overlaps(figures.render('circuit', spec)) == 0
 
 
 def test_labels_written_as_latex_read_as_text():

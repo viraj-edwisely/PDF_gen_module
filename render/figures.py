@@ -5,7 +5,7 @@ Every figure is described by a small JSON spec inside the content JSON:
     {"type": "figure", "kind": "gantt", "spec": {...}, "title": "...", "caption": "...", "width": 1.0}
 The renderers call render(kind, spec), which caches the PNG by content hash.
 
-Kinds: gantt (alias timeline), plot, bars, graph, cells, circuit (here); geometry (fig_geometry.py); block, logic,
+Kinds: gantt (alias timeline), plot, bars, graph, cells (here); circuit (fig_circuit.py); geometry (fig_geometry.py); block, logic,
 mermaid (fig_diagrams.py); process (fig_process.py); beam, mohr, pressure, waveform, spectrum, cycle, control, mccabe, vle (fig_physics.py:
 shapes computed from physics). The exact spec of each kind is the docstring of its function; reference() turns those docstrings and the
 GALLERY examples into the text the model reads, so the prompt can never drift from the code.
@@ -410,55 +410,9 @@ def cells(spec, out):
     return save(fig, out)
 
 
-# ---------------------------------------------------------------- beam
-# ---------------------------------------------------------------- circuit (schemdraw)
-def _anchor(ids, ref):
-    """'R1.end' -> the placed element R1's anchor named 'end' (anchor names are checked, not blindly getattr'd)."""
-    i, an = ref.split('.')
-    if i not in ids: raise ValueError(f'no element with id {i!r} before {ref!r}')
-    if an not in ids[i].anchors: raise ValueError(f'unknown anchor {ref!r}; {i} has {sorted(ids[i].anchors)}')
-    return getattr(ids[i], an)          # the anchor's position in the drawing (anchors[...] holds it relative to the element)
+import fig_circuit, fig_diagrams, fig_geometry, fig_physics, fig_process          # after the shared helpers above: they draw panels with plot()
 
-
-def circuit(spec, out):
-    """spec: {"elements": [{"el": "SourceV"|"Resistor"|"Capacitor"|"Inductor"|"Diode"|"Line"|"Ground"|"Dot"|
-                                  "SourceI"|"Switch"|"Opamp"|"Battery"|"Lamp"|"Zener"|"BjtNpn"|"NFet"|...,
-                            "dir": "right"|"left"|"up"|"down", "label": "10 Ω", "length": 3,
-                            "id": "R1", "at": "R1.end", "to": "R1.start", "tox": "R1.start", "toy": "V1.end",
-                            "loc": "top"|"bottom" (label side), "reverse": bool}],
-              "unit": 2.5}
-    Anchors: start, end, center, and element-specific ones (Opamp: in1, in2, out). Draw nets in order."""
-    import schemdraw
-    import schemdraw.elements as E
-    brand()
-    ids = {}
-    with schemdraw.Drawing(show=False) as d:
-        d.config(unit=spec.get('unit', 2.5), color=PURPLE, fontsize=11, font='DejaVu Sans', lw=1.5)  # Poppins has no Greek (Ω, µ)
-        for e in spec['elements']:
-            cls = getattr(E, e['el'], None)
-            if not (isinstance(cls, type) and issubclass(cls, E.Element)): raise ValueError(f'unknown circuit element {e["el"]!r}')
-            el = cls()
-            if e.get('reverse'): el = el.reverse()
-            if e.get('at'):
-                el = el.at(_anchor(ids, e['at']))
-            if e.get('dir'):
-                if e['dir'] not in ('up', 'down', 'left', 'right'): raise ValueError(f'bad direction {e["dir"]!r}')
-                el = getattr(el, e['dir'])()
-            if e.get('length'): el = el.length(e['length'])
-            for k in ('to', 'tox', 'toy'):
-                if e.get(k):
-                    el = getattr(el, k)(_anchor(ids, e[k]))
-            if e.get('label'): el = el.label(e['label'], loc=e.get('loc', 'top'), color=INK)
-            if e.get('color'): el = el.color(col(e['color']))
-            d += el
-            if e.get('id'): ids[e['id']] = el
-        d.save(out, dpi=DPI)
-    return out
-
-
-import fig_diagrams, fig_geometry, fig_physics, fig_process          # after the shared helpers above: they draw panels with plot()
-
-KINDS = {'gantt': gantt, 'timeline': gantt, 'plot': plot, 'bars': bars, 'graph': graph, 'cells': cells, 'circuit': circuit,
+KINDS = {'gantt': gantt, 'timeline': gantt, 'plot': plot, 'bars': bars, 'graph': graph, 'cells': cells, 'circuit': fig_circuit.circuit,
          'geometry': fig_geometry.geometry, 'block': fig_diagrams.block, 'logic': fig_diagrams.logic, 'mermaid': fig_diagrams.mermaid,
          'beam': fig_physics.beam, 'mohr': fig_physics.mohr, 'pressure': fig_physics.pressure, 'waveform': fig_physics.waveform,
          'spectrum': fig_physics.spectrum, 'cycle': fig_physics.cycle, 'control': fig_physics.control, 'mccabe': fig_physics.mccabe, 'vle': fig_physics.vle, 'process': fig_process.process,
@@ -564,10 +518,14 @@ GALLERY = {
     'beam_ce_me': ('beam', {'length': 6, 'supports': [{'x': 0, 'type': 'pin'}, {'x': 6, 'type': 'roller'}], 'points': {'A': 0, 'C': 2, 'B': 6},
                             'loads': [{'type': 'point', 'x': 2, 'P': 20}, {'type': 'udl', 'x1': 3, 'x2': 6, 'w': 5}],
                             'dims': [[0, 2, '2 m'], [2, 6, '4 m']]}),
-    'circuit_ee_ec': ('circuit', {'elements': [{'el': 'SourceV', 'dir': 'up', 'label': '12 V', 'id': 'V'}, {'el': 'Resistor', 'dir': 'right', 'label': '4 Ω'},
-                                               {'el': 'Dot', 'id': 'n'}, {'el': 'Resistor', 'dir': 'down', 'label': '6 Ω', 'loc': 'bottom'},
-                                               {'el': 'Line', 'dir': 'left', 'tox': 'V.start'}, {'el': 'Line', 'at': 'n.center', 'dir': 'right', 'length': 2.5},
-                                               {'el': 'Capacitor', 'dir': 'down', 'label': '10 µF', 'loc': 'bottom', 'id': 'C'}, {'el': 'Line', 'dir': 'left', 'length': 2.5}]}),
+    'circuit_inverting_amp_ec_ee': ('circuit', {'nodes': {'s': [0, 2.5], 'g': [0, 0], 'g2': [3, 0], 'f': [3, 4], 'f2': [5, 4], 'o': [6, 2]},
+                                              'parts': [['Vi', 'V', 's', 'g', 'V_i'], ['R1', 'R', 's', 'm', 'R₁ = 10 kΩ'], ['', 'W', 'm', 'f'],
+                                                        ['Rf', 'R', 'f', 'f2', 'R_f = 100 kΩ'], ['', 'W', 'f2', 'out'], ['', 'W', 'out', 'o'],
+                                                        ['U1', 'opamp', 'm', 'p', 'out', '', {'at': [4, 2]}], ['', 'W', 'p', 'g2'], ['', 'W', 'g', 'g2']],
+                                              'ground': ['g2'], 'terminals': {'o': 'V_o'}}),
+    'circuit_rc_ee_ec': ('circuit', {'nodes': {'a': [0, 2], 'b': [3, 2], 'c': [6, 2], 'g': [0, 0], 'h': [3, 0], 'k': [6, 0]},
+                                     'parts': [['V1', 'V', 'a', 'g', '12 V'], ['R1', 'R', 'a', 'b', '4 Ω', {'current': 'I'}], ['R2', 'R', 'b', 'h', '6 Ω', {'voltage': 'V_x'}],
+                                               ['', 'W', 'b', 'c'], ['C1', 'C', 'c', 'k', '10 µF'], ['', 'W', 'g', 'h'], ['', 'W', 'h', 'k']]}),
     'geometry_floating_body_me': ('geometry', {'items': [
         {'type': 'surface', 'y': 0, 'x': [-3, 3], 'label': 'waterline'},
         {'type': 'rect', 'at': [-1.5, -1.0], 'w': 3, 'h': 2, 'rotate': 10, 'about': [0, 0], 'fill': 'lav'},

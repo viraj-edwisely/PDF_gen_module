@@ -55,6 +55,9 @@ Use the figure a textbook uses: students recognise it and SMEs expect it.
 - Sampling and quantisation: plot panels (signal, samples as stems, reconstruction). Line codes: plot with "step".
 - Control: block diagram of the loop (block, with feedback), step response, Bode, Nyquist, root locus (control).
 - Circuits: circuit; diode/transistor characteristics: plot; logic: logic (gates, K-map, timing).
+  Lay a circuit out the way textbooks do, so every PDF looks alike: the source on the left (+ on top), the return or ground
+  rail along the bottom, the signal flowing left to right with the output terminal on the right, an op-amp's feedback path
+  above it, a transistor stage hanging from a supply terminal at the top; parts 2 or 3 grid steps apart.
 - Machines and power: phasor diagram (geometry arrows), equivalent circuit (circuit), torque-speed or efficiency curve (plot).
 
 **ME / PI / XE / CE**
