@@ -63,9 +63,19 @@ def _layout(spec, canon):
         chain = [ns[0], *sorted((n for n, pt in nodes.items() if _on(pt, p, q)), key=lambda n: abs(nodes[n][0] - p[0]) + abs(nodes[n][1] - p[1])), ns[1]]
         for u, v in zip(chain, chain[1:]):
             if frozenset((u, v)) not in seen: seen.add(frozenset((u, v))); split.append(('', 'W', [u, v], '', {}))
+    ground = sorted(dict.fromkeys(g for g in map(canon, spec.get('ground') or []) if g in nodes), key=lambda g: nodes[g][0])
+    if len(ground) > 1 and len({nodes[g][1] for g in ground}) == 1:     # a ground symbol under every branch: one return rail and one symbol
+        y, x0, x1 = nodes[ground[0]][1], nodes[ground[0]][0], nodes[ground[-1]][0]
+        on_row = lambda p, q: (p[1] == q[1] == y and min(p[0], q[0]) < x1 and max(p[0], q[0]) > x0) or \
+                              (p[0] == q[0] and x0 < p[0] < x1 and min(p[1], q[1]) < y < max(p[1], q[1]))
+        segs = [(nodes[ns[0]], nodes[ns[1]]) for _, typ, ns, _, _ in split if typ in TWO and not (typ == 'W' and set(ns) <= set(ground))]
+        if not any(pt[1] == y and x0 < pt[0] < x1 and n not in ground for n, pt in nodes.items()) and not any(on_row(p, q) for p, q in segs) and \
+           not any(b[1] < y < b[3] and b[0] < x1 and b[2] > x0 for _, b, _ in bodies):
+            split += [('', 'W', [u, v], '', {}) for u, v in zip(ground, ground[1:]) if frozenset((u, v)) not in seen]
+            ground = ground[:1]
     for name, typ, ns, _, _ in split:
         if typ in TWO: lines.append((name or f'the wire {ns[0]}-{ns[1]}', nodes[ns[0]], nodes[ns[1]], ns))
-    return nodes, split, lines, bodies
+    return nodes, split, lines, bodies, ground
 
 
 def _on(pt, p, q):
@@ -96,8 +106,8 @@ def _in_box(p, q, box):
 
 def check(spec, canon=str):
     """Everything wrong with the circuit, as sentences that say what to change (empty when it can be printed)."""
-    nodes, parts, lines, bodies = _layout(spec, canon)
-    errs, ground, terms = [], [canon(g) for g in spec.get('ground') or []], {canon(k) for k in (spec.get('terminals') or {})}
+    nodes, parts, lines, bodies, ground = _layout(spec, canon)
+    errs, terms = [], {canon(k) for k in (spec.get('terminals') or {})}
     degree = {n: 0 for n in nodes}
     for _, _, ns, _, _ in parts:
         for n in ns: degree[n] += 1
@@ -120,7 +130,7 @@ def check(spec, canon=str):
         for w2, r, s, ns2 in straight[i + 1:]:
             how = _meets((p, q), (r, s))
             if how == 'overlap' and set(ns1) == set(ns2):     # parallel parts written on the same two nodes, as SPICE does
-                d = (1, 0) if p[0] == q[0] else (0, -1)
+                d = (2, 0) if p[0] == q[0] else (0, -2)        # 2 steps: room for both labels
                 u, v = (r[0] + d[0], r[1] + d[1]), (s[0] + d[0], s[1] + d[1])
                 errs.append(f'{w1} and {w2} both join {ns2[0]!r} and {ns2[1]!r}, so they would be drawn on one line: draw {w2} beside {w1}, '
                             f'between new nodes at {fmt(u)} and {fmt(v)} joined to {ns2[0]!r} and {ns2[1]!r} by wires')
@@ -133,15 +143,16 @@ def check(spec, canon=str):
         if k == 0: errs.append(f'node {n!r} is not used by any part: remove it')
         elif k == 1 and n not in terms and n not in ground: errs.append(f'node {n!r} is joined to one part only, so that part is left open: connect it, or list it in "terminals" if it is an open terminal')
     errs += [f'"terminals" names node {t!r}, which is not in the circuit' for t in terms if t not in nodes]
+    errs += [f'ground node {g!r} is not in "nodes"' for g in map(canon, spec.get('ground') or []) if g not in nodes]
     for g in ground:
-        if g not in nodes: errs.append(f'ground node {g!r} is not in "nodes"')
-        elif any(nodes[g] in (p, q) and min(p[1], q[1]) < nodes[g][1] for _, p, q, _ in straight): errs.append(f'node {g!r} has a line going down, so its ground symbol would sit on it: ground a node with nothing below it')
+        if any(nodes[g] in (p, q) and min(p[1], q[1]) < nodes[g][1] for _, p, q, _ in straight): errs.append(f'node {g!r} has a line going down, so its ground symbol would sit on it: ground a node with nothing below it')
     net = {n: n for n in nodes}                                   # nets joined by wires: a part with both ends in one net is shorted
     def root(n):
         while net[n] != n: n = net[n]
         return n
     for _, typ, ns, _, _ in parts:
         if typ == 'W': net[root(ns[0])] = root(ns[1])
+    for g in ground[1:]: net[root(g)] = root(ground[0])              # ground symbols are one node
     errs += [f'{name} is shorted: wires join both its ends, so no current flows through it' for name, typ, ns, _, _ in parts if typ in TWO and typ != 'W' and root(ns[0]) == root(ns[1])]
     for _, _, ns, _, _ in parts:                                  # one connected circuit (a transformer's two sides count as joined)
         for n in ns[1:]: net[root(n)] = root(ns[0])
@@ -219,7 +230,7 @@ def circuit(spec, out):
     from figures import text_label
     errs = check(spec, text_label)
     if errs: raise ValueError('; '.join(errs[:3]) + (f' (and {len(errs) - 3} more)' if len(errs) > 3 else ''))
-    nodes, parts, lines, bodies = _layout(spec, text_label)
+    nodes, parts, lines, bodies, ground = _layout(spec, text_label)
     brand()
     xs, ys = [p[0] for p in nodes.values()], [p[1] for p in nodes.values()]
     centre = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
@@ -236,24 +247,34 @@ def circuit(spec, out):
             cls, half, backwards = TWO[typ]
             a, b = (ns[1], ns[0]) if backwards else (ns[0], ns[1])
             p, q = nodes[a], nodes[b]
-            el = cls().endpoints(S(p), S(q))
-            if typ != 'W':
-                left = (p[1] - q[1], q[0] - p[0])                                     # schemdraw's "top" is left of the drawing direction
-                loc = lambda s: 'top' if s[0] * left[0] + s[1] * left[1] > 0 else 'bottom'
-                s = _side(p, q, half / G + 0.1, label or 'x', obstacles, centre)
-                if label: el = el.label(label, loc=loc(s), color=INK)
-                if opts.get('voltage'):
-                    plus = text_label(str(opts.get('plus', ns[0])))
-                    signs = ['+', str(opts['voltage']), '−'] if plus == a else ['−', str(opts['voltage']), '+']
-                    el = el.label(signs, loc=loc((-s[0], -s[1])), color=INK)
-            d += el
-            if opts.get('current') and typ != 'W':
-                into = text_label(str(opts.get('into', ns[1])))
-                d += E.CurrentLabelInline(direction='out', start=into == a).at(el).label(str(opts['current']), color=INK, fontsize=10)
+            d += (el := cls().endpoints(S(p), S(q)))
+            if typ == 'W': continue
+            # labels placed here, not by schemdraw (its "top" side does not follow the drawing direction): the label on the freer
+            # side s, the + V − marks across from it at the ends of the symbol, a current's name beside its arrow on side s
+            P, Q = S(p), S(q)
+            span = abs(Q[0] - P[0]) + abs(Q[1] - P[1])
+            u, along = ((Q[0] - P[0]) / span, (Q[1] - P[1]) / span), min(0.8, span / 2)
+            at = lambda k, o, v: ((P[0] + Q[0]) / 2 + u[0] * k + v[0] * o, (P[1] + Q[1]) / 2 + u[1] * k + v[1] * o)
+            align = lambda v: dict(halign={1: 'left', -1: 'right'}.get(v[0], 'center'), valign={1: 'bottom', -1: 'top'}.get(v[1], 'center'))
+            box = lambda c1, c2: obstacles.append((min(c1[0], c2[0]) / G, min(c1[1], c2[1]) / G, max(c1[0], c2[0]) / G, max(c1[1], c2[1]) / G))
+            s = _side(p, q, half / G + 0.1, label or 'x', obstacles, centre)
+            if label: d += E.Label().at(at(0, half + 0.15, s)).label(label, color=INK, **align(s))
+            if opts.get('voltage'):
+                n, text = (-s[0], -s[1]), str(opts['voltage'])
+                plus_k = -along if text_label(str(opts.get('plus', ns[0]))) == a else along
+                for sign, k in (('+', plus_k), ('−', -plus_k)): d += E.Label().at(at(k, half + 0.25, n)).label(sign, color=INK, fontsize=12)
+                d += E.Label().at(at(0, half + 0.25, n)).label(text, color=INK, **align(n))
+                box(at(-along, half, n), at(along, half + 0.45 + 0.19 * len(text), n))
+            if opts.get('current'):
+                into, text = text_label(str(opts.get('into', ns[1]))), str(opts['current'])
+                k = (-1 if into == a else 1) * min(0.8, span / 2 - 0.1)          # the arrow sits on the lead next to the node it points into
+                d += E.CurrentLabelInline(direction='out', start=into == a).at(el)
+                d += E.Label().at(at(k, 0.3, s)).label(text, color=INK, fontsize=10, **align(s))
+                box(at(k - 0.2, 0.2, s), at(k + 0.2, 0.4 + 0.17 * len(text), s))
         for n, pt in nodes.items():
             if n in {text_label(t) for t in spec.get('terminals') or {}}: d += E.Dot(open=True).at(S(pt))
             elif degree[n] >= 3: d += E.Dot().at(S(pt))
-        for g in spec.get('ground') or []: d += E.Ground().at(S(nodes[text_label(g)]))
+        for g in ground: d += E.Ground().at(S(nodes[g]))
         taken = [(p, q) for _, p, q, _ in lines]
         for _, (x0, y0, x1, y1), pins in bodies:          # a pin's lead runs into its part
             taken += [(pin, ((x0 + x1) / 2, pin[1]) if not x0 < pin[0] < x1 else (pin[0], (y0 + y1) / 2)) for pin in pins]

@@ -681,6 +681,9 @@ def block_problems(bs, allowed, path):
         elif t == 'table' and not (b.get('header') and b.get('rows')): out.append((p, 'a table needs "header" and "rows"', True))
         elif t == 'figure' and b.get('kind') not in FIGURE_KINDS: out.append((p, f'figure kind {b.get("kind")!r} does not exist; use one of {sorted(FIGURE_KINDS - {"photo"})}', True))
         elif t == 'example' and not b.get('problem'): out.append((p, 'an example needs a "problem" and a "solution"', True))
+        elif t == 'example' and not (b.get('steps') or b.get('solution')):      # seen: the figure in one box, the working after it, then the example again
+            out.append((p, 'this worked example has no solution: give it its "steps" (its figure stays inside "problem"); never put the working '
+                           'in blocks after the example or write the example a second time', True))
         elif t in ('example', 'worked_example') and b.get('check'):
             m = check_mismatch(b['check']) or missing_data(b['check'], json.dumps(b.get('problem') or b.get('text') or '', ensure_ascii=False))
             if m: out.append((p, 'the worked example: ' + m, False))

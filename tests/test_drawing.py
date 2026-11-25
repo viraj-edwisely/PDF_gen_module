@@ -64,7 +64,7 @@ BROKEN_CIRCUITS = [        # (what a writer got wrong, nodes, parts, a phrase th
     ('every grounded part on one node (SPICE)', {'a': [0, 2], 'n': [3, 2], 'g': [0, 0]}, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'n'], ['R2', 'R', 'n', 'g']],
      r"new node at \[3, 0\] and join that node to 'g'"),
     ('parallel parts on the same nodes (SPICE)', LOOP, [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['G', 'Idep', 'b', 'h'], ['', 'W', 'g', 'h']],
-     r'draw G beside R2, between new nodes at \[4, 2\] and \[4, 0\]'),
+     r'draw G beside R2, between new nodes at \[5, 2\] and \[5, 0\]'),
     ('lines crossing', dict(LOOP, c=[1.5, 3], d=[1.5, 1]), [['V1', 'V', 'a', 'g'], ['R1', 'R', 'a', 'b'], ['R2', 'R', 'b', 'h'], ['', 'W', 'g', 'h'], ['R3', 'R', 'c', 'd']], 'crosses'),
     ('a wire through the op-amp', {'s': [0, 2.5], 'g': [0, 1], 'k': [3, 1]},
      [['V', 'V', 's', 'g'], ['R1', 'R', 's', 'm'], ['U1', 'opamp', 'm', 'p', 'o', '', {'at': [4, 2]}], ['', 'W', 'p', 'k'], ['', 'W', 'g', 'k'], ['RL', 'R', 'o', 'm']], 'symbol of U1'),
@@ -84,6 +84,16 @@ def test_circuit_wire_over_nodes_joins_them_and_repeats_are_drawn_once():
                                                               ['Z1', 'Z', 'c', 'k', 'Z_L'], ['', 'W', 'g', 'k'], ['', 'W', 'k', 'g']]}
     import fig_circuit
     assert fig_circuit.check(spec) == [] and figures.overlaps(figures.render('circuit', spec)) == 0
+
+
+def test_circuit_ground_under_every_branch_becomes_one_rail():
+    """Seen in a live run: a ground symbol under each of four branches. Textbooks draw one return rail and one ground."""
+    import fig_circuit
+    spec = {'nodes': {'t1': [0, 3], 't2': [3, 3], 't3': [6, 3], 'g1': [0, 0], 'g2': [3, 0], 'g3': [6, 0]}, 'ground': ['g1', 'g2', 'g3'],
+            'parts': [['V1', 'V', 't1', 'g1'], ['R2', 'R', 't2', 'g2'], ['R3', 'R', 't3', 'g3'], ['', 'W', 't1', 't3']]}
+    nodes, parts, _, _, ground = fig_circuit._layout(spec, str)
+    assert ground == ['g1'] and {frozenset(p[2]) for p in parts if p[1] == 'W'} >= {frozenset(('g1', 'g2')), frozenset(('g2', 'g3'))}
+    assert figures.overlaps(figures.render('circuit', spec)) == 0
 
 
 def test_circuit_ground_symbol_never_sits_on_a_line():

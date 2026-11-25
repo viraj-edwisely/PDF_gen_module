@@ -94,6 +94,9 @@ def test_failures_seen_in_real_pdfs():
     assert C.block('{"type": "formula", "latex": "x = 1"}', 'gate') == {'type': 'formula', 'latex': 'x = 1'}
     leak = [{'type': 'para', 'text': 'ref":"notes/1","value":{' + '}]' * 10}]
     assert C.block_problems(leak, C.GATE_BLOCKS, ('notes', 0, 'blocks'))[0][2] is True
+    # seen live: an example box holding only its figure, the working after it, then the example again
+    stub = [{'type': 'example', 'problem': [{'type': 'para', 'text': 'Find v.'}, {'type': 'figure', 'kind': 'plot', 'spec': {}}]}]
+    assert 'no solution' in C.block_problems(stub, C.GATE_BLOCKS, ('notes', 0, 'blocks'))[0][1]
     # data used by the check but missing from the question (G = 80 GPa); exponents are not data
     q = {'qtype': 'NAT', 'question': 'Shaft: 90 kW at 300 rpm, twist 1.5 deg over 2 m. D in mm is ______', 'answer': '76.8',
          'check': '1000*(32*2865*2/(3.14159*80e9*0.02618*0.8025))**0.25'}
